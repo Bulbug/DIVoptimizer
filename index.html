@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DIVoptimizer - see every Windows change before it happens</title>
+<meta name="description" content="A transparent, hardware-aware, reversible Windows optimization utility. Scan, preview, back up, apply, verify, restore.">
+<style>
+:root{--paper:#f3f5f7;--panel:#fff;--ink:#14202b;--mute:#566574;--rule:#cbd5dd;--blue:#0b6e99;--blue-ink:#fff;--warn:#9a4a05;--ok:#1b6b3a;--code:#0f1a24;--code-ink:#e3edf4}
+@media (prefers-color-scheme:dark){:root{--paper:#0e151c;--panel:#141e27;--ink:#e6eef4;--mute:#93a3b1;--rule:#26343f;--blue:#5cb8e0;--blue-ink:#06222f;--warn:#e0a35a;--ok:#6cc98f;--code:#091017;--code-ink:#e3edf4}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif}
+a{color:var(--blue)}
+:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+.wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+header{display:flex;justify-content:space-between;align-items:center;padding:20px 0}
+.brand{font:700 20px "Segoe UI Variable Display","Segoe UI",sans-serif;letter-spacing:-.01em;color:var(--ink);text-decoration:none}
+.brand b{color:var(--blue)}
+nav a{margin-left:20px;color:var(--mute);text-decoration:none;font-size:15px}
+nav a:hover{color:var(--ink)}
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center;padding:40px 0 56px}
+h1{font:700 clamp(2rem,4.6vw,3.3rem)/1.08 "Segoe UI Variable Display","Segoe UI",sans-serif;letter-spacing:-.025em;margin:0 0 16px}
+.lede{font-size:18px;color:var(--mute);max-width:34em;margin:0 0 24px}
+.cmd{background:var(--code);color:var(--code-ink);border-radius:6px;display:flex;align-items:stretch;overflow:hidden}
+.cmd code{flex:1;padding:14px 16px;font:15px/1.5 "Cascadia Code","Cascadia Mono",Consolas,monospace;overflow-x:auto;white-space:nowrap}
+.cmd button{border:0;background:var(--blue);color:var(--blue-ink);font:600 15px "Segoe UI",sans-serif;padding:0 20px;cursor:pointer}
+.cmd button:hover{filter:brightness(1.1)}
+.hint{font-size:14px;color:var(--mute);margin:10px 0 0}
+.receipt{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:20px 22px;font:14px/1.7 "Cascadia Code","Cascadia Mono",Consolas,monospace;box-shadow:6px 6px 0 var(--rule)}
+.receipt .t{color:var(--mute);margin:0 0 10px}
+.row{display:grid;grid-template-columns:1fr auto;gap:2px 14px;padding:8px 0;border-top:1px dashed var(--rule)}
+.row small{grid-column:1/-1;color:var(--mute);font-size:13px}
+.tag{font-weight:700;font-size:12px}
+.low{color:var(--ok)}.opt{color:var(--warn)}.adv{color:#c03a2b}
+.end{border-top:2px solid var(--ink);margin-top:6px;padding-top:10px;font-weight:700;color:var(--ok)}
+section{padding:44px 0;border-top:1px solid var(--rule)}
+h2{font:700 1.5rem/1.2 "Segoe UI Variable Display","Segoe UI",sans-serif;margin:0 0 20px;letter-spacing:-.01em}
+.flow{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(6,1fr);gap:0;border:1px solid var(--rule);border-radius:6px;background:var(--panel)}
+.flow li{padding:16px 14px;border-left:1px solid var(--rule);font-size:15px}
+.flow li:first-child{border-left:0}
+.flow b{display:block;font-size:13px;color:var(--blue);margin-bottom:4px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:40px}
+table{width:100%;border-collapse:collapse;font-size:15px}
+td,th{text-align:left;padding:10px 8px;border-bottom:1px solid var(--rule);vertical-align:top}
+td code{font:13px Consolas,"Cascadia Mono",monospace;background:var(--panel);border:1px solid var(--rule);padding:2px 6px;border-radius:3px;word-break:break-all}
+.notice{background:var(--panel);border-left:4px solid var(--warn);padding:16px 18px;border-radius:0 6px 6px 0}
+.notice p{margin:0 0 8px}.notice p:last-child{margin:0}
+footer{border-top:1px solid var(--rule);padding:28px 0 48px;color:var(--mute);font-size:14px}
+@media (max-width:860px){.hero,.cols{grid-template-columns:1fr}.flow{grid-template-columns:1fr 1fr}.flow li{border-left:0;border-top:1px solid var(--rule)}.flow li:nth-child(-n+2){border-top:0}}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="brand" href="#top">DIV<b>optimizer</b></a>
+    <nav><a href="#how">How it works</a><a href="#commands">Commands</a><a href="#trust">Before you run it</a><a href="https://github.com/Bulbug/DIVoptimizer">Source</a></nav>
+  </header>
+
+  <main id="top">
+    <div class="hero">
+      <div>
+        <h1>See every Windows change before it happens. Undo it after.</h1>
+        <p class="lede">DIVoptimizer scans your PC, recommends only what fits your hardware, shows the exact current and new value of each setting, backs up what it touches, and restores it on request.</p>
+        <div class="cmd">
+          <code id="main-cmd">irm YOUR-DOMAIN/run | iex</code>
+          <button type="button" id="copy" data-target="main-cmd">Copy</button>
+        </div>
+        <p class="hint">Paste into PowerShell. It opens a window where you choose what to apply. Nothing changes until you approve it.</p>
+      </div>
+      <div class="receipt" aria-label="Example dry run output">
+        <p class="t">DIVoptimizer -WhatIf &nbsp;(example)</p>
+        <div class="row"><span>Disable Game DVR</span><span class="tag low">LOW RISK</span><small>Default → Disabled</small></div>
+        <div class="row"><span>Turn off advertising ID</span><span class="tag opt">OPTIONAL</span><small>Enabled → Disabled</small></div>
+        <div class="row"><span>Disable SysMain</span><span class="tag adv">ADVANCED</span><small>Running → Disabled &nbsp;(never selected for you)</small></div>
+        <div class="end">NO CHANGES WERE MADE.</div>
+      </div>
+    </div>
+
+    <section id="how">
+      <h2>What happens when you run it</h2>
+      <ol class="flow">
+        <li><b>Scan</b>Reads your hardware and settings. Changes nothing.</li>
+        <li><b>Recommend</b>Advice differs for a laptop, a desktop, 8 GB or 32 GB.</li>
+        <li><b>Preview</b>Current → new, risk level, downside, restart needed.</li>
+        <li><b>Back up</b>Verified before anything is touched.</li>
+        <li><b>Apply</b>Only what you approved. Each change is verified.</li>
+        <li><b>Restore</b>From the app, or from the emergency reset script.</li>
+      </ol>
+    </section>
+
+    <section id="commands">
+      <h2>Commands</h2>
+      <table>
+        <tr><th>To</th><th>Run in PowerShell</th></tr>
+        <tr><td>Open the app</td><td><code data-cmd="irm {o}/run | iex"></code></td></tr>
+        <tr><td>Scan only (changes nothing)</td><td><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -Scan"></code></td></tr>
+        <tr><td>Dry run (shows what would change)</td><td><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -WhatIf"></code></td></tr>
+        <tr><td>Text menu instead of the window</td><td><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -Console"></code></td></tr>
+        <tr><td>Emergency restore</td><td><code data-cmd="irm {o}/reset | iex"></code></td></tr>
+      </table>
+    </section>
+
+    <section id="trust">
+      <h2>Before you run it</h2>
+      <div class="cols">
+        <div class="notice">
+          <p><b>What it does not promise.</b></p>
+          <p>DIVoptimizer does not guarantee FPS increases, lower latency, lower temperatures, or faster Windows performance. Results depend on hardware, drivers, applications, configuration, thermals and workload.</p>
+        </div>
+        <div>
+          <p><b>Read it first.</b> The command downloads a script and runs it with your privileges. The full source is on <a href="https://github.com/Bulbug/DIVoptimizer">GitHub</a>; read it, or pin a reviewed version instead of the latest.</p>
+          <p>Defender and Windows Update are never part of any profile. Removing apps is not automatically reversible, and the app says so before you confirm.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>DIVoptimizer v0.7.0 by Kaz. For Windows 10 and 11. Use at your own risk; test on a restore point or a virtual machine first.</footer>
+</div>
+
+<script>
+(function(){
+  var origin = /^https?:/.test(location.protocol) ? location.origin : 'https://YOUR-DOMAIN';
+  document.querySelectorAll('[data-cmd]').forEach(function(el){
+    el.textContent = el.getAttribute('data-cmd').replace('{o}', origin);
+  });
+  var main = document.getElementById('main-cmd');
+  main.textContent = 'irm ' + origin + '/run | iex';
+  var btn = document.getElementById('copy');
+  btn.addEventListener('click', function(){
+    var text = main.textContent;
+    var done = function(){ btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = 'Copy'; }, 1800); };
+    if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done); }
+    else { var r = document.createRange(); r.selectNodeContents(main); var s = getSelection(); s.removeAllRanges(); s.addRange(r); try { document.execCommand('copy'); done(); } catch (e) { btn.textContent = 'Select and copy'; } }
+  });
+})();
+</script>
+</body>
+</html>
