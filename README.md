@@ -44,40 +44,58 @@ Requires Windows PowerShell 5.1 (included with Windows). PowerShell 7 on Windows
 
 ## Installation
 
-1. Download the release zip `DIVoptimizer-v0.7.0.zip` and extract it anywhere.
-2. If Windows blocked the files: right-click each `.ps1` -> Properties -> **Unblock** (or run `Get-ChildItem . -Recurse | Unblock-File`).
-3. Run it from the extracted folder.
+Nothing to download or install. Open **PowerShell** (Windows PowerShell 5.1 or PowerShell 7) and run:
 
-**There is deliberately no `irm <url> | iex` installer.** DIVoptimizer never downloads and executes remote code as Administrator. Download, inspect, then run a local file.
+```powershell
+irm "https://raw.githubusercontent.com/Bulbug/DIVoptimizer/refs/heads/main/DIVoptimizer.ps1" | iex
+```
+
+That starts the GUI. If your Windows is old and you get a TLS error, run this first: `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12`
+
+You can also save the script and run the file; everything works the same either way.
+
+**Trust note.** Running `irm | iex` executes whatever is currently published at that URL, with your privileges. Only run it from a repository you trust, and if you maintain the repo, protect `main` (2FA, branch protection). To use a fixed, reviewed version instead of the latest `main`, pin a tag or commit:
+
+```powershell
+$env:DIVOPTIMIZER_URL = "https://raw.githubusercontent.com/Bulbug/DIVoptimizer/v0.7.0/DIVoptimizer.ps1"
+irm $env:DIVOPTIMIZER_URL | iex
+```
+
+(`DIVOPTIMIZER_URL` is also what the Administrator relaunch uses, so the elevated copy is the same pinned version. It must be an HTTPS github.com / raw.githubusercontent.com address or it is ignored.)
 
 ## Usage
 
+`irm | iex` cannot take switches. To pass switches, use the script-block form (replace `<url>` with the address above):
+
+```powershell
+& ([scriptblock]::Create((irm "<url>"))) -Console
+```
+
 ```powershell
 # GUI (default)
-powershell -ExecutionPolicy Bypass -File .\DIVoptimizer.ps1
+irm "<url>" | iex
 
 # Console menu
-.\DIVoptimizer.ps1 -Console
+& ([scriptblock]::Create((irm "<url>"))) -Console
 
 # Read-only scan: changes nothing, writes no log or backup
-.\DIVoptimizer.ps1 -Scan
+& ([scriptblock]::Create((irm "<url>"))) -Scan
 
 # Dry run: shows system, potential changes, current -> proposed values,
 # risk levels and restart needs. Makes ZERO changes.
-.\DIVoptimizer.ps1 -WhatIf
+& ([scriptblock]::Create((irm "<url>"))) -WhatIf
 
 # Quick Optimize (LOW RISK only, still previews and asks)
-.\DIVoptimizer.ps1 -Quick
+& ([scriptblock]::Create((irm "<url>"))) -Quick
 
-# A profile
-.\DIVoptimizer.ps1 -ProfileName Gaming        # Gaming | Laptop | Desktop | LowResource
+# A profile: Gaming | Laptop | Desktop | LowResource
+& ([scriptblock]::Create((irm "<url>"))) -ProfileName Gaming
 
 # Export a report (no personal data)
-.\DIVoptimizer.ps1 -Scan -Report C:\Temp\report.json -Format json
-
-# Check for a newer release (never installs anything)
-.\DIVoptimizer.ps1 -CheckUpdate
+& ([scriptblock]::Create((irm "<url>"))) -Scan -Report C:\Temp\report.json -Format json
 ```
+
+If you saved the file, the same switches work directly: `.\DIVoptimizer.ps1 -Console`, `-Scan`, `-WhatIf`, `-Quick`, `-ProfileName`, `-Report`, `-CheckUpdate`, `-ShowVersion`.
 
 Example `-WhatIf` output:
 
@@ -105,7 +123,7 @@ NO CHANGES WERE MADE.
 
 ### Administrator rights
 
-DIVoptimizer starts as a normal user. Scanning, reports and per-user (HKCU) tweaks work without elevation. When a selected change needs Administrator (HKLM settings, services, scheduled tasks, restore points), it tells you **why** and offers a UAC relaunch of the same local file with your selection carried over.
+DIVoptimizer starts as a normal user. Scanning, reports and per-user (HKCU) tweaks work without elevation. When a selected change needs Administrator (HKLM settings, services, scheduled tasks, restore points), it tells you **why** and offers a UAC relaunch with your selection carried over. For a saved file it re-runs that file; for `irm | iex` it re-runs the same one-liner from the fixed HTTPS GitHub URL (selection IDs are validated to plain identifiers before going into the command). When the remote run ends, DIVoptimizer removes the functions and variables it added to your PowerShell session.
 
 ## Risk levels
 
@@ -166,8 +184,9 @@ Do not attempt restoration because the backup format cannot be verified.
 - **Emergency (independent of the GUI):**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\DIVoptimizer-Reset.ps1
+irm "https://raw.githubusercontent.com/Bulbug/DIVoptimizer/refs/heads/main/DIVoptimizer-Reset.ps1" | iex
 ```
+(or run `DIVoptimizer-Reset.ps1` as a file)
 
 ```
 [1] Restore latest backup   [2] Registry   [3] Services   [4] Scheduled tasks
@@ -184,7 +203,7 @@ powershell -ExecutionPolicy Bypass -File .\DIVoptimizer-Reset.ps1
 
 | Symptom | Fix |
 |---|---|
-| "running scripts is disabled" | `powershell -ExecutionPolicy Bypass -File .\DIVoptimizer.ps1` (applies to that one run). |
+| "running scripts is disabled" (saved file only) | Use the one-liner (not subject to execution policy) or `powershell -ExecutionPolicy Bypass -File .\DIVoptimizer.ps1`. |
 | "Requires Administrator" | Accept the UAC prompt DIVoptimizer offers, or start PowerShell as Administrator. |
 | No restore point created | Needs Administrator; Windows also allows one per 24 hours by default. DIVoptimizer's own backup is still made. |
 | GUI does not open | Falls back to the console automatically; or run with `-Console`. |
@@ -200,13 +219,13 @@ powershell -ExecutionPolicy Bypass -File .\DIVoptimizer-Reset.ps1
 
 **Is "Trim Memory" a RAM booster?** No. It is now *Temporary Working-Set Trim*, an advanced troubleshooting tool: it does not create RAM and Windows reloads the memory when needed. It is not part of Quick Optimize.
 
-**Does it phone home?** No telemetry. The only network use is the explicit update check, which fetches a small JSON manifest over HTTPS.
+**Does it phone home?** No telemetry. Network use is limited to the `irm` that starts it, the Administrator relaunch (same URL), and the explicit update check.
 
 **Can I remove apps and get them back?** Not automatically. Reinstall from Microsoft Store or another official source.
 
 ## Updates
 
-`-CheckUpdate` (or *Check for updates* in the app) fetches a manifest from `$Script:UpdateManifestUrl` and shows current vs latest version, release notes, download source, SHA-256 and signature status. You can have it download the package to a staging folder where the SHA-256 is verified; it **never** replaces or runs anything. Manifest format:
+When started with `irm | iex` you always get the latest published script, so an update check mainly matters for saved copies. `-CheckUpdate` (or *Check for updates* in the app) fetches a manifest from `$Script:UpdateManifestUrl` and shows current vs latest version, release notes, download source, SHA-256 and signature status. You can have it download the package to a staging folder where the SHA-256 is verified; it **never** replaces or runs anything. Manifest format:
 
 ```json
 { "version": "0.7.1", "notes": "What changed", "url": "https://github.com/<owner>/<repo>/releases/download/v0.7.1/DIVoptimizer-v0.7.1.zip", "sha256": "<64 hex characters>" }
@@ -217,7 +236,7 @@ Allowed download hosts: `github.com`, `raw.githubusercontent.com`, `objects.gith
 ## Development
 
 ```
-DIVoptimizer.ps1          main program (GUI + console)
+DIVoptimizer.ps1          main program (GUI + console); runs from a file or via irm | iex
 DIVoptimizer-Reset.ps1    emergency restore
 tests\DIVoptimizer.Tests.ps1   Pester 5 tests
 ```

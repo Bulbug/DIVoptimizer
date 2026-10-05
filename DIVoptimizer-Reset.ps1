@@ -7,7 +7,8 @@
 # registry values, services, scheduled tasks, startup settings,
 # the power plan and the hibernation state.
 #
-# Run:   powershell -ExecutionPolicy Bypass -File .\DIVoptimizer-Reset.ps1
+# Run:   irm "https://raw.githubusercontent.com/Bulbug/DIVoptimizer/refs/heads/main/DIVoptimizer-Reset.ps1" | iex
+#   or:  powershell -ExecutionPolicy Bypass -File .\DIVoptimizer-Reset.ps1
 # Best run as Administrator (HKLM settings, services, tasks, power).
 # ================================================================
 param(
@@ -15,6 +16,7 @@ param(
     [string]$BackupId = ''
 )
 
+$Script:ResetUrl = 'https://raw.githubusercontent.com/Bulbug/DIVoptimizer/refs/heads/main/DIVoptimizer-Reset.ps1'
 $Script:AppName       = 'DIVoptimizer Emergency Restore'
 $Script:Version       = '0.7.0'
 $Script:SchemaVersion = 2
@@ -865,14 +867,21 @@ if (-not (Test-Administrator)) {
     Write-Host ''
     Write-Host '  Not running as Administrator. HKCU settings and startup entries can be restored;' -ForegroundColor Yellow
     Write-Host '  HKLM settings, services, scheduled tasks, power plan and hibernation need Administrator.' -ForegroundColor Yellow
-    if ($PSCommandPath) {
-        $a = Read-Host '  Relaunch as Administrator now? [Y/n]'
-        if ($a -notmatch '^(n|no)$') {
-            try {
-                Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $PSCommandPath + '"')) -Verb RunAs -ErrorAction Stop
-                return
-            } catch { Write-Host ('  Elevation cancelled: ' + $_.Exception.Message) -ForegroundColor Red }
-        }
+    $a = Read-Host '  Relaunch as Administrator now? [Y/n]'
+    if ($a -notmatch '^(n|no)$') {
+        try {
+            $hostExe = (Get-Process -Id $PID).Path
+            if ($PSCommandPath) {
+                $relaunch = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $PSCommandPath + '"'))
+            } else {
+                $u = [uri]$Script:ResetUrl
+                if ($u.Scheme -ne 'https' -or @('raw.githubusercontent.com', 'github.com') -notcontains $u.Host) { throw 'The reset script URL is not an allowed HTTPS GitHub address.' }
+                $inner = "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod -Uri '$($Script:ResetUrl)' -UseBasicParsing)))"
+                $relaunch = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ('"' + $inner + '"'))
+            }
+            Start-Process -FilePath $hostExe -ArgumentList $relaunch -Verb RunAs -ErrorAction Stop
+            return
+        } catch { Write-Host ('  Elevation cancelled or failed: ' + $_.Exception.Message) -ForegroundColor Red }
     }
 }
 

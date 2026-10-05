@@ -41,8 +41,10 @@
 - `config.ini` was silently ignored when run via `irm | iex`.
 
 ### Security
-- Removed `irm <url> | iex` and the unpinned self-download relaunch as Administrator. Elevation relaunches the **same local file** only, on demand, with an explanation.
-- No telemetry; the only network use is the explicit update check.
+- Runs from a saved file **or** via `irm <url> | iex` (project owner's choice). The old unpinned self-download relaunch was replaced: elevation re-runs the same file, or for a remote run the same one-liner from a fixed HTTPS GitHub URL (host allow-list, optional pinned `DIVOPTIMIZER_URL`), and only validated plain identifiers are placed in the relaunch command line.
+- A remote run leaves the user's PowerShell session clean (adds no lingering functions or variables).
+- Running via `irm | iex` executes whatever is published at the URL with the user's privileges; protect the repository (2FA, branch protection) and use a pinned tag for fixed versions.
+- No telemetry; no `exit` that would close the user's terminal.
 - Protected-service and protected-package lists enforced in code. Defender and Windows Update are never part of any profile.
 
 ### Known limitations

@@ -546,3 +546,27 @@ Describe 'Backup retention' {
         @($over | ForEach-Object { $_.Id }) | Should -Be @('2026-01-02_000000', '2026-01-01_000000')
     }
 }
+
+Describe 'Remote (irm | iex) elevation safeguards' {
+    It 'only accepts HTTPS GitHub script URLs' {
+        Test-AllowedScriptUrl -Url 'https://raw.githubusercontent.com/Bulbug/DIVoptimizer/refs/heads/main/DIVoptimizer.ps1' | Should -BeTrue
+        Test-AllowedScriptUrl -Url 'http://raw.githubusercontent.com/x/y/main/a.ps1' | Should -BeFalse
+        Test-AllowedScriptUrl -Url 'https://evil.example.com/a.ps1' | Should -BeFalse
+        Test-AllowedScriptUrl -Url 'https://raw.githubusercontent.com.evil.com/a.ps1' | Should -BeFalse
+        Test-AllowedScriptUrl -Url 'not a url' | Should -BeFalse
+    }
+    It 'only lets plain identifiers into a relaunch command line' {
+        ConvertTo-SafeIdList -Ids @('gamedvr-off', "x'; calc; '", 'startup-disable_a_b', 'a b', '$(evil)') | Should -Be 'gamedvr-off,startup-disable_a_b'
+    }
+    It 'ignores an unsafe DIVOPTIMIZER_URL override' {
+        $old = $env:DIVOPTIMIZER_URL
+        try {
+            $env:DIVOPTIMIZER_URL = 'https://evil.example.com/a.ps1'
+            Get-SelfUrl | Should -Be $Script:SelfUrl
+        } finally { $env:DIVOPTIMIZER_URL = $old }
+    }
+    It 'points the built-in URLs at GitHub over HTTPS' {
+        Test-AllowedScriptUrl -Url $Script:SelfUrl | Should -BeTrue
+        Test-AllowedScriptUrl -Url $Script:ResetUrl | Should -BeTrue
+    }
+}

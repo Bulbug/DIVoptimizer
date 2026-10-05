@@ -16,9 +16,13 @@
 #   .\DIVoptimizer.ps1 -CheckUpdate  look for a newer release (never auto-installs)
 #   .\DIVoptimizer.ps1 -Report <file> [-Format txt|json]   export a system report
 #
-# Run it from a saved file. It deliberately does NOT support
-# "irm <url> | iex": downloading and executing remote code as
-# Administrator is not something this tool does.
+# Works both ways:
+#   irm "https://raw.githubusercontent.com/Bulbug/DIVoptimizer/refs/heads/main/DIVoptimizer.ps1" | iex
+#   .\DIVoptimizer.ps1                      (saved file)
+# To pass switches when running remotely:
+#   & ([scriptblock]::Create((irm "<url>"))) -Scan
+# When run remotely, elevation re-runs the same one-liner from the fixed HTTPS
+# URL below (GitHub hosts only), and the PowerShell session is left clean.
 #
 # Needs Windows PowerShell 5.1 (built into Windows 10/11).
 # ================================================================
@@ -34,6 +38,14 @@ param(
     [switch]$ShowVersion,
     [string]$Preselect = ''
 )
+
+# A remote run (irm | iex) executes in the caller's global scope. Remember what exists now so the
+# session can be left clean when we finish.
+$Script:RemoteRun = [string]::IsNullOrEmpty($PSCommandPath)
+if ($Script:RemoteRun) {
+    $Script:PreFunctions = @(Get-ChildItem -Path Function: | ForEach-Object { $_.Name })
+    $Script:PreVariables = @(Get-ChildItem -Path Variable: | ForEach-Object { $_.Name })
+}
 
 $Script:AppName       = 'DIVoptimizer'
 $Script:Version       = '0.7.0'
@@ -57,6 +69,11 @@ $Script:SettingsPath     = Join-Path $Script:DataRoot 'settings.json'
 $Script:ProgramDataBase  = $env:ProgramData
 if (-not $Script:ProgramDataBase) { $Script:ProgramDataBase = $Script:LocalBase }
 $Script:LegacyBackupsDir = Join-Path $Script:ProgramDataBase 'DIVoptimizer\Backups'
+
+# Where this script lives. Used to re-run itself elevated when it was started with irm | iex.
+# Override for a pinned release:  $env:DIVOPTIMIZER_URL = '<https raw.githubusercontent.com url>'
+$Script:SelfUrl  = 'https://raw.githubusercontent.com/Bulbug/DIVoptimizer/refs/heads/main/DIVoptimizer.ps1'
+$Script:ResetUrl = 'https://raw.githubusercontent.com/Bulbug/DIVoptimizer/refs/heads/main/DIVoptimizer-Reset.ps1'
 
 $Script:UpdateManifestUrl = 'https://raw.githubusercontent.com/Bulbug/DIVoptimizer/main/update.json'
 
@@ -603,7 +620,7 @@ function Get-StartupItems {
             Write-Log -Level WARN -Action 'STARTUP_TASKS' -ErrorText $_.Exception.Message
         }
     }
-    return @($items)
+    return $items.ToArray()
 }
 
 function Get-InstalledProgramNames {
@@ -621,7 +638,7 @@ function Get-InstalledProgramNames {
             if ($dn) { $names.Add([string]$dn) }
         }
     }
-    return @($names)
+    return $names.ToArray()
 }
 
 function Get-SteamLibraries {
@@ -794,7 +811,7 @@ function Get-ScanReportLines {
     $L.Add('')
     $L.Add('== DETECTED GAMES / LAUNCHERS (detection only) ==')
     if (@($Scan.Games).Count -eq 0) { $L.Add('None detected') } else { foreach ($g in @($Scan.Games)) { $L.Add(("{0}  ({1})" -f $g.Name, $g.Source)) } }
-    return @($L)
+    return $L.ToArray()
 }
 
 function Show-ScanReport {
@@ -1907,9 +1924,9 @@ function Save-BackupSession {
     $counts = [ordered]@{}
     foreach ($m in $map) {
         $path = Join-Path $s.Dir $m.Rel
-        Write-JsonFile -Path $path -Object ([ordered]@{ Records = @($s.Records[$m.Key]) })
+        Write-JsonFile -Path $path -Object ([ordered]@{ Records = $s.Records[$m.Key].ToArray() })
         $files[$m.Rel] = Get-Sha256 -Path $path
-        $counts[$m.Key] = @($s.Records[$m.Key]).Count
+        $counts[$m.Key] = $s.Records[$m.Key].Count
     }
     $win = $Script:LastScan
     $meta = [ordered]@{
@@ -1917,8 +1934,8 @@ function Save-BackupSession {
         User = $env:USERNAME; Computer = $env:COMPUTERNAME
         WindowsVersion = $(if ($win) { $win.Windows.Version } else { '' }); WindowsBuild = $(if ($win) { $win.Windows.Build } else { '' })
         IsAdmin = (Test-Administrator); Description = $s.Description; Profile = $s.Profile
-        SystemRestore = $s.SystemRestore; Counts = $counts; NotReversible = @($s.NotReversible)
-        Changes = @($s.Changes); Applied = $s.Applied
+        SystemRestore = $s.SystemRestore; Counts = $counts; NotReversible = $s.NotReversible.ToArray()
+        Changes = $s.Changes.ToArray(); Applied = $s.Applied
         LogFile = $(if ($Script:SessionLogPath) { Split-Path -Leaf $Script:SessionLogPath } else { '' })
         Files = $files
     }
@@ -1933,7 +1950,7 @@ function Test-Backup {
     if ($chk.Ok -and $s -and $s.Dir -eq $Dir) {
         $counts = $chk.Meta.Counts
         foreach ($k in @('Registry', 'Services', 'Tasks', 'Startup', 'PowerPlan', 'Hibernation', 'Apps')) {
-            if ([int]$counts.$k -ne @($s.Records[$k]).Count) { $chk.Problems += "Record count mismatch for $k"; $chk.Ok = $false }
+            if ([int]$counts.$k -ne $s.Records[$k].Count) { $chk.Problems += "Record count mismatch for $k"; $chk.Ok = $false }
         }
     }
     return $chk
@@ -2219,7 +2236,7 @@ function Get-TweakCatalog {
         RollbackNote = 'Temporary; nothing is changed permanently.'
     }))
     foreach ($e in @($Script:ServiceCatalog)) { $list.Add((New-ServiceTweak -Entry $e -Target 'Disabled')) }
-    return @($list)
+    return $list.ToArray()
 }
 
 # ---------------------------------------------------------------
@@ -2540,7 +2557,7 @@ function Backup-Tweak {
         'Trim' { $s.NotReversible.Add('Working-set trim: temporary, nothing to restore') }
         default { }
     }
-    return @($problems)
+    return $problems.ToArray()
 }
 
 function Get-BackupCoverage {
@@ -2991,23 +3008,55 @@ function Invoke-NetworkTool {
 # ELEVATION  (start normally; ask for Administrator only when a change needs it)
 # ---------------------------------------------------------------
 
+function Test-AllowedScriptUrl {
+    # HTTPS and GitHub hosts only.
+    param([string]$Url)
+    try { $u = [uri]$Url } catch { return $false }
+    return ($u.Scheme -eq 'https' -and @('raw.githubusercontent.com', 'github.com') -contains $u.Host)
+}
+
+function Get-SelfUrl {
+    $o = $env:DIVOPTIMIZER_URL
+    if ($o -and (Test-AllowedScriptUrl -Url $o)) { return $o }
+    return $Script:SelfUrl
+}
+
+function ConvertTo-SafeIdList {
+    # Only plain identifiers may be placed into a relaunch command line.
+    param([string[]]$Ids)
+    $ok = @($Ids | Where-Object { $_ -match '^[A-Za-z0-9_\-]+$' })
+    return ($ok -join ',')
+}
+
 function Request-Elevation {
     param([string]$Why, [string[]]$Ids = @(), [switch]$Silent)
-    if (-not $PSCommandPath) {
-        Write-Tag WARN 'Cannot request Administrator from here. Save DIVoptimizer.ps1 to a file and run that file.'
-        return $false
-    }
     Write-Tag INFO "Administrator is needed because: $Why"
     if (-not $Silent) {
         if (-not (Read-YesNo -Prompt 'Relaunch DIVoptimizer as Administrator now? (Windows will show a UAC prompt)' -DefaultYes)) { return $false }
     }
     $hostExe = (Get-Process -Id $PID).Path
-    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $PSCommandPath + '"'))
-    if (-not $Script:IsGui) { $a += '-Console' }
-    if (@($Ids).Count -gt 0) { $a += '-Preselect'; $a += ('"' + ($Ids -join ',') + '"') }
+    $safeIds = ConvertTo-SafeIdList -Ids $Ids
+    $a = @()
+    if ($PSCommandPath) {
+        # Started from a saved file: re-run that same file.
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $PSCommandPath + '"'))
+        if (-not $Script:IsGui) { $a += '-Console' }
+        if ($safeIds) { $a += '-Preselect'; $a += ('"' + $safeIds + '"') }
+    } else {
+        # Started with irm | iex: re-run the same one-liner from the fixed HTTPS URL.
+        $url = Get-SelfUrl
+        if (-not (Test-AllowedScriptUrl -Url $url)) { Write-Tag FAIL 'The script URL is not an allowed HTTPS GitHub address, so it will not be run elevated.'; return $false }
+        $inner = "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod -Uri '$url' -UseBasicParsing)))"
+        if (-not $Script:IsGui) { $inner += ' -Console' }
+        if ($safeIds) { $inner += " -Preselect '$safeIds'" }
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass')
+        if ($Script:IsGui) { $a += '-WindowStyle'; $a += 'Hidden' }
+        $a += '-Command'
+        $a += ('"' + $inner + '"')
+    }
     try {
         Start-Process -FilePath $hostExe -ArgumentList $a -Verb RunAs -ErrorAction Stop
-        Write-Log -Level INFO -Action 'ELEVATE' -Message $Why
+        Write-Log -Level INFO -Action 'ELEVATE' -Message ($Why + $(if ($PSCommandPath) { ' (file)' } else { ' (remote one-liner)' }))
         return $true
     } catch {
         Write-Tag FAIL "Elevation was cancelled or failed: $($_.Exception.Message)"
@@ -3272,7 +3321,7 @@ function Invoke-ReviewAndApply {
     if ($ready.NeedsElevation) {
         Write-Tag WARN 'Some of these changes modify system-wide settings and need Administrator.'
         $ids = @($tweaks | ForEach-Object { $_.Id })
-        if (Request-Elevation -Why 'system-wide settings (HKLM, services, scheduled tasks or restore points) can only be changed by an Administrator' -Ids $ids) { Write-Host '   A new elevated window was opened. You can close this one.'; Wait-Enter; exit 0 }
+        if (Request-Elevation -Why 'system-wide settings (HKLM, services, scheduled tasks or restore points) can only be changed by an Administrator' -Ids $ids) { Write-Host '   A new elevated window was opened. You can close this one.'; $Script:QuitRequested = $true; Wait-Enter; return $null }
         return $null
     }
     if (-not $ready.BackupReady) { Write-Tag FAIL 'The backup folder is not writable, so changes cannot be applied safely.'; return $null }
@@ -3527,7 +3576,7 @@ function Invoke-MaintenancePage {
         if ($cmd.Count -ne 1) { continue }
         $cmd = $cmd[0]
         try {
-            if (-not (Test-Administrator)) { Write-Tag WARN 'These tools need Administrator.'; if (Request-Elevation -Why 'DISM and SFC require Administrator') { exit 0 }; continue }
+            if (-not (Test-Administrator)) { Write-Tag WARN 'These tools need Administrator.'; if (Request-Elevation -Why 'DISM and SFC require Administrator') { $Script:QuitRequested = $true; return }; continue }
             foreach ($w in @(Get-LaptopWarnings -Scan $Script:LastScan -Operation $cmd.Name)) { Write-Tag WARN $w }
             if ($cmd.Confirm -and -not (Read-YesNo -Prompt ("{0}. {1} Run it?" -f $cmd.Name, $cmd.Note))) { continue }
             $code = Invoke-MaintenanceCommand -Cmd $cmd
@@ -4029,6 +4078,7 @@ function Show-MainMenu {
             Write-Log -Level FAIL -Action 'UI_ERROR' -ErrorText $_.Exception.ToString()
             Wait-Enter
         }
+        if ($Script:QuitRequested) { return }
     }
 }
 
@@ -4868,94 +4918,113 @@ function Start-GuiApp {
 # ENTRY POINT
 # ================================================================
 
+function Invoke-DIVoptimizerMain {
+    if ($ShowVersion) {
+        Write-Host ("{0} v{1}" -f $Script:AppName, $Script:Version)
+        return
+    }
+
+    if ($PSVersionTable.PSVersion.Major -lt 5) {
+        Write-Host 'DIVoptimizer needs Windows PowerShell 5.1 or newer.' -ForegroundColor Red
+        return
+    }
+
+    $Script:PreselectIds = @()
+    if ($Preselect) { $Script:PreselectIds = @($Preselect -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+    $fmt = 'txt'
+    if ($Format -and $Format.ToLower() -eq 'json') { $fmt = 'json' }
+
+    if ($CheckUpdate) {
+        try {
+            $u = Get-UpdateInfo
+            Write-Host ("Current : v{0}" -f $u.Current)
+            Write-Host ("Latest  : v{0}" -f $u.Latest)
+            Write-Host ("Notes   : {0}" -f $u.Notes)
+            Write-Host ("Source  : {0}" -f $u.Url)
+            Write-Host ("SHA-256 : {0}" -f $u.Sha256)
+            if ($u.Newer) { Write-Host 'A newer version exists. (Running via irm | iex always uses the latest published script.) Nothing was downloaded or changed.' -ForegroundColor Yellow }
+            else { Write-Host 'You are on the latest version.' -ForegroundColor Green }
+        } catch {
+            Write-Host ('Could not check for updates: ' + $_.Exception.Message) -ForegroundColor Red
+        }
+        return
+    }
+
+    if ($Scan) {
+        # SCAN-ONLY: reads system state, changes nothing, writes no log or backup.
+        $scanResult = Get-SystemScan
+        if ($Report) {
+            Export-SystemReport -Scan $scanResult -Path $Report -Format $fmt
+            Write-Host "Report written to: $Report"
+        } else {
+            Show-ScanReport -Scan $scanResult
+        }
+        Write-Host 'SCAN ONLY: no changes were made.' -ForegroundColor Green
+        return
+    }
+
+    if ($WhatIf) {
+        # DRY RUN: shows potential changes, makes none (no registry, service, file, backup or log writes).
+        Invoke-DryRunReport
+        return
+    }
+
+    if ($Report) {
+        $scanResult = Get-SystemScan
+        Export-SystemReport -Scan $scanResult -Path $Report -Format $fmt
+        Write-Host "Report written to: $Report"
+        return
+    }
+
+    if ($ProfileName -and -not $Script:Profiles.Contains($ProfileName)) {
+        Write-Host ("Unknown profile '{0}'. Choose one of: {1}" -f $ProfileName, (@($Script:Profiles.Keys) -join ', ')) -ForegroundColor Red
+        return
+    }
+
+    Start-LogSession
+
+    if ($Quick -or $ProfileName) {
+        Initialize-Console
+        $s = Get-SystemScan
+        if (-not $s.Windows.Supported) { Write-Host ("Not supported: {0}" -f $s.Windows.Status) -ForegroundColor Red; return }
+        if ($Quick) { Invoke-QuickOptimize } else { Invoke-RecommendationsPage -ProfileName $ProfileName }
+        Show-SessionSummary
+        return
+    }
+
+    if ($Console) {
+        Start-ConsoleApp
+        Write-Log -Level INFO -Action 'SESSION_END' -Message 'console'
+        return
+    }
+
+    try {
+        Start-GuiApp
+        Write-Log -Level INFO -Action 'SESSION_END' -Message 'gui'
+    } catch {
+        Write-Host ('The GUI could not start: ' + $_.Exception.Message) -ForegroundColor Red
+        Write-Log -Level FAIL -Action 'GUI_START' -ErrorText $_.Exception.ToString()
+        Write-Host 'Falling back to the console interface...' -ForegroundColor Yellow
+        Start-ConsoleApp
+    }
+}
+
+function Clear-RemoteSessionState {
+    # After an irm | iex run, remove every function and variable this script added to the user's session.
+    $keepF = @($Script:PreFunctions)
+    $keepV = @($Script:PreVariables) + @('LASTEXITCODE', 'Matches', 'Error', 'PSItem', '_', '?', '^', '$')
+    $paramNames = @('Console', 'Scan', 'WhatIf', 'Quick', 'ProfileName', 'Report', 'Format', 'CheckUpdate', 'ShowVersion', 'Preselect')
+    $newFunctions = @(Get-ChildItem -Path Function: | Where-Object { $keepF -notcontains $_.Name } | ForEach-Object { $_.Name })
+    $newVariables = @(Get-ChildItem -Path Variable: | Where-Object { $keepV -notcontains $_.Name } | ForEach-Object { $_.Name })
+    foreach ($n in ($newVariables + $paramNames)) { Remove-Variable -Name $n -Scope Global -Force -ErrorAction SilentlyContinue }
+    foreach ($n in $newFunctions) { Remove-Item -LiteralPath ('Function:\' + $n) -Force -ErrorAction SilentlyContinue }
+}
+
 # When this file is dot-sourced (for example by the Pester tests) only the functions are defined.
 if ($MyInvocation.InvocationName -eq '.') { return }
 
-if ($ShowVersion) {
-    Write-Host ("{0} v{1}" -f $Script:AppName, $Script:Version)
-    return
-}
-
-if ($PSVersionTable.PSVersion.Major -lt 5) {
-    Write-Host 'DIVoptimizer needs Windows PowerShell 5.1 or newer.' -ForegroundColor Red
-    return
-}
-
-$Script:PreselectIds = @()
-if ($Preselect) { $Script:PreselectIds = @($Preselect -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
-if (@('txt', 'json') -notcontains $Format.ToLower()) { $Format = 'txt' }
-$Format = $Format.ToLower()
-
-if ($CheckUpdate) {
-    try {
-        $u = Get-UpdateInfo
-        Write-Host ("Current : v{0}" -f $u.Current)
-        Write-Host ("Latest  : v{0}" -f $u.Latest)
-        Write-Host ("Notes   : {0}" -f $u.Notes)
-        Write-Host ("Source  : {0}" -f $u.Url)
-        Write-Host ("SHA-256 : {0}" -f $u.Sha256)
-        if ($u.Newer) { Write-Host 'An update is available. Download it from the source above and verify the SHA-256 before running it. Nothing was downloaded or changed.' -ForegroundColor Yellow }
-        else { Write-Host 'You are on the latest version.' -ForegroundColor Green }
-    } catch {
-        Write-Host ('Could not check for updates: ' + $_.Exception.Message) -ForegroundColor Red
-    }
-    return
-}
-
-if ($Scan) {
-    # SCAN-ONLY: reads system state, changes nothing, writes no log or backup.
-    $scanResult = Get-SystemScan
-    if ($Report) {
-        Export-SystemReport -Scan $scanResult -Path $Report -Format $Format
-        Write-Host "Report written to: $Report"
-    } else {
-        Show-ScanReport -Scan $scanResult
-    }
-    Write-Host 'SCAN ONLY: no changes were made.' -ForegroundColor Green
-    return
-}
-
-if ($WhatIf) {
-    # DRY RUN: shows potential changes, makes none (no registry, service, file, backup or log writes).
-    Invoke-DryRunReport
-    return
-}
-
-if ($Report) {
-    $scanResult = Get-SystemScan
-    Export-SystemReport -Scan $scanResult -Path $Report -Format $Format
-    Write-Host "Report written to: $Report"
-    return
-}
-
-if ($ProfileName -and -not $Script:Profiles.Contains($ProfileName)) {
-    Write-Host ("Unknown profile '{0}'. Choose one of: {1}" -f $ProfileName, (@($Script:Profiles.Keys) -join ', ')) -ForegroundColor Red
-    return
-}
-
-Start-LogSession
-
-if ($Quick -or $ProfileName) {
-    Initialize-Console
-    $s = Get-SystemScan
-    if (-not $s.Windows.Supported) { Write-Host ("Not supported: {0}" -f $s.Windows.Status) -ForegroundColor Red; return }
-    if ($Quick) { Invoke-QuickOptimize } else { Invoke-RecommendationsPage -ProfileName $ProfileName }
-    Show-SessionSummary
-    return
-}
-
-if ($Console) {
-    Start-ConsoleApp
-    Write-Log -Level INFO -Action 'SESSION_END' -Message 'console'
-    return
-}
-
 try {
-    Start-GuiApp
-    Write-Log -Level INFO -Action 'SESSION_END' -Message 'gui'
-} catch {
-    Write-Host ('The GUI could not start: ' + $_.Exception.Message) -ForegroundColor Red
-    Write-Log -Level FAIL -Action 'GUI_START' -ErrorText $_.Exception.ToString()
-    Write-Host 'Falling back to the console interface...' -ForegroundColor Yellow
-    Start-ConsoleApp
+    Invoke-DIVoptimizerMain
+} finally {
+    if ($Script:RemoteRun) { Clear-RemoteSessionState }
 }
