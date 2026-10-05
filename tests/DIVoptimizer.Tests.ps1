@@ -570,3 +570,25 @@ Describe 'Remote (irm | iex) elevation safeguards' {
         Test-AllowedScriptUrl -Url $Script:ResetUrl | Should -BeTrue
     }
 }
+
+Describe 'Administrator relaunch and progress' {
+    It 'relaunches in the same mode the user chose' {
+        @(Get-RelaunchModeArgs -IsConsole $false -IsQuick $true -ProfileId '') | Should -Be @('-Quick')
+        @(Get-RelaunchModeArgs -IsConsole $false -IsQuick $false -ProfileId 'Gaming') | Should -Be @('-ProfileName', 'Gaming')
+        @(Get-RelaunchModeArgs -IsConsole $true -IsQuick $false -ProfileId '') | Should -Be @('-Console')
+        @(Get-RelaunchModeArgs -IsConsole $false -IsQuick $false -ProfileId '').Count | Should -Be 0
+    }
+    It 'never passes an unknown profile name into a command line' {
+        @(Get-RelaunchModeArgs -IsConsole $true -IsQuick $false -ProfileId 'x; calc') | Should -Be @('-Console')
+    }
+    It 'rejects an unsafe relaunch argument' {
+        Mock Start-Process { }
+        Request-Elevation -Why 'test' -Silent -ModeArgs @('-Console; calc') | Should -BeFalse
+        Should -Invoke Start-Process -Times 0
+    }
+    It 'progress helpers do not throw in the console' {
+        { Write-Busy -Activity 'Test' -Status 'Step' -Percent 50 } | Should -Not -Throw
+        { Write-Busy -Activity 'Test' -Status 'Step' } | Should -Not -Throw
+        { Clear-Busy } | Should -Not -Throw
+    }
+}

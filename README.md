@@ -123,7 +123,15 @@ NO CHANGES WERE MADE.
 
 ### Administrator rights
 
-DIVoptimizer starts as a normal user. Scanning, reports and per-user (HKCU) tweaks work without elevation. When a selected change needs Administrator (HKLM settings, services, scheduled tasks, restore points), it tells you **why** and offers a UAC relaunch with your selection carried over. For a saved file it re-runs that file; for `irm | iex` it re-runs the same one-liner from the fixed HTTPS GitHub URL (selection IDs are validated to plain identifiers before going into the command). When the remote run ends, DIVoptimizer removes the functions and variables it added to your PowerShell session.
+DIVoptimizer **requires Administrator** for the app itself (GUI, console, Quick Optimize, profiles), because it backs up and changes system settings, services, scheduled tasks and restore points. If you start it normally it explains why and relaunches itself through the Windows UAC prompt, in the same mode you asked for. If you decline, nothing is started.
+
+The read-only modes do **not** need Administrator: `-Scan`, `-WhatIf`, `-Report`, `-CheckUpdate`, `-ShowVersion`.
+
+When started with `irm | iex`, the relaunch re-runs the same one-liner from the fixed HTTPS GitHub URL (selection IDs are validated to plain identifiers before going into the command). When the remote run ends, DIVoptimizer removes the functions and variables it added to your PowerShell session.
+
+### Progress while it works
+
+Every task shows what it is doing. In the console, a progress bar appears at the top of the window (scan stages, backup, each change being applied, cleanup, benchmark). In the GUI, a loading panel with a progress bar covers the window during scans, backups, restores, cleanup estimates, app and startup checks, applying changes, benchmarking and update checks. It always clears when the task finishes or fails. A single long step can make the GUI look unresponsive until that step ends; DISM and SFC run in their own console window for that reason.
 
 ## Risk levels
 

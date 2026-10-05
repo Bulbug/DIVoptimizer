@@ -20,6 +20,9 @@
 - Pester tests that never touch the real system.
 
 ### Improved
+- Administrator is now required to run the app; it relaunches itself through UAC in the same mode. Read-only modes (`-Scan`, `-WhatIf`, `-Report`, `-CheckUpdate`) still work without it.
+- Visible progress for every task: console progress bar and a GUI loading overlay with a progress bar (scan stages, backup, apply, cleanup, restore, benchmark, update check).
+- The GUI window opens immediately and runs its first scan behind the loading overlay.
 - "Safe Debloat" renamed **Optional Apps** with OPTIONAL / USER-DEPENDENT / ADVANCED categories and per-app selection; exact package matching.
 - "Low RAM" mode replaced by Resource Optimization / Low Resource Profile (no blind service disabling).
 - "Trim Memory" renamed **Temporary Working-Set Trim**, advanced-only, with an honest explanation.

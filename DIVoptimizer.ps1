@@ -105,6 +105,22 @@ function Format-Bytes {
     return ('{0:N0} B' -f $Bytes)
 }
 
+function Write-Busy {
+    # Shows progress for the current task: Write-Progress in the console, the loading overlay in the GUI.
+    param([string]$Activity, [string]$Status = '', [int]$Percent = -1)
+    if ($Script:IsGui -and $Script:GuiBusyOverlay) {
+        if ($Script:GuiBusyOverlay.Visibility -eq 'Visible') { Set-GuiBusy -Text ($Activity + ': ' + $Status) -Percent $Percent }
+        return
+    }
+    if ($Percent -ge 0) { Write-Progress -Id 1 -Activity $Activity -Status $Status -PercentComplete ([Math]::Min(100, $Percent)) }
+    else { Write-Progress -Id 1 -Activity $Activity -Status $Status }
+}
+
+function Clear-Busy {
+    if ($Script:IsGui -and $Script:GuiBusyOverlay) { return }
+    Write-Progress -Id 1 -Activity 'DIVoptimizer' -Completed
+}
+
 function Get-CimSafe {
     param([string]$Class, [string]$Filter = '', [string]$Namespace = '')
     try {
@@ -730,31 +746,48 @@ function Get-FolderStats {
 
 function Get-SystemScan {
     param([switch]$Quiet)
+    $act = 'Scanning your PC (read-only)'
+    Write-Busy -Activity $act -Status 'Windows version...' -Percent 5
     $win = Get-WindowsInfo
     $Script:WinLabel = ("{0} build {1}" -f $win.Caption, $win.Build)
+    Write-Busy -Activity $act -Status 'Hardware and storage...' -Percent 15
     $hw = Get-HardwareInfo
+    Write-Busy -Activity $act -Status 'Power and memory...' -Percent 35
+    $pw = Get-PowerInfo -Hardware $hw
+    $mem = Get-MemoryInfo
+    $sto = Get-StorageInfo
+    $cpu = Get-CpuLoad
+    Write-Busy -Activity $act -Status 'Windows features...' -Percent 50
+    $feat = Get-FeatureState
+    Write-Busy -Activity $act -Status 'Startup items...' -Percent 62
+    $startup = @(Get-StartupItems)
+    Write-Busy -Activity $act -Status 'Services...' -Percent 74
+    $svc = @()
+    foreach ($e in @($Script:ServiceCatalog)) { $svc += (Get-ServiceInfo -Name $e.Name) }
+    Write-Busy -Activity $act -Status 'Detecting games and launchers...' -Percent 84
+    $games = @(Get-DetectedGames)
+    Write-Busy -Activity $act -Status 'Temporary files...' -Percent 94
+    $tempMB = $null
+    $t = Get-FolderStats -Path $env:TEMP
+    if ($t.Exists) { $tempMB = [math]::Round($t.Bytes / 1MB, 0) }
     $scan = [pscustomobject]@{
         Timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         ToolVersion = $Script:Version
         IsAdmin = (Test-Administrator)
         Windows = $win
         Hardware = $hw
-        Power = (Get-PowerInfo -Hardware $hw)
-        Memory = (Get-MemoryInfo)
-        Storage = (Get-StorageInfo)
-        CpuLoad = (Get-CpuLoad)
-        Features = (Get-FeatureState)
-        Startup = @(Get-StartupItems)
-        Services = @()
-        Games = @(Get-DetectedGames)
-        UserTempMB = $null
+        Power = $pw
+        Memory = $mem
+        Storage = $sto
+        CpuLoad = $cpu
+        Features = $feat
+        Startup = $startup
+        Services = @($svc)
+        Games = $games
+        UserTempMB = $tempMB
     }
-    $svc = @()
-    foreach ($e in @($Script:ServiceCatalog)) { $svc += (Get-ServiceInfo -Name $e.Name) }
-    $scan.Services = @($svc)
-    $t = Get-FolderStats -Path $env:TEMP
-    if ($t.Exists) { $scan.UserTempMB = [math]::Round($t.Bytes / 1MB, 0) }
     $Script:LastScan = $scan
+    Clear-Busy
     Write-Log -Level INFO -Action 'SCAN' -Result 'COMPLETE' -Message ("{0}; {1} GB RAM; {2}; {3}" -f $Script:WinLabel, $hw.RamGB, $hw.SystemDriveType, $hw.DeviceType)
     return $scan
 }
@@ -2455,6 +2488,7 @@ function Invoke-CleanupTarget {
         foreach ($f in @(Get-ChildItem -LiteralPath $t.Path -Filter $filter -File -Recurse -Force -ErrorAction SilentlyContinue)) {
             try { $len = [long]$f.Length; Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $removed++; $freed += $len }
             catch { $skipped++; $lastErr = $_.Exception.Message }
+            if ((($removed + $skipped) % 100) -eq 0) { Write-Busy -Activity ('Cleaning ' + $t.Name) -Status ('{0} files removed, {1} skipped' -f $removed, $skipped) }
         }
         if ($filter -eq '*') {
             foreach ($d in @(Get-ChildItem -LiteralPath $t.Path -Directory -Recurse -Force -ErrorAction SilentlyContinue | Sort-Object { $_.FullName.Length } -Descending)) {
@@ -2700,8 +2734,8 @@ function Invoke-ApplyPlan {
         RestorePoint = [pscustomobject]@{ Status = 'Not attempted'; Message = '' }
         Items = @(); Success = 0; Failed = 0; Skipped = 0; RestartNeeded = $false; RestartReasons = @(); LogFile = ''
     }
-    $say = { param($m) if ($Progress) { & $Progress $m } else { Write-Host ("   " + $m) } }
-    $abort = { param($why) $res.Aborted = $true; $res.AbortReason = $why; Write-Log -Level WARN -Action 'APPLY_ABORT' -Message $why; return $res }
+    $say = { param($m, $p = -1) if ($Progress) { & $Progress $m $p } else { Write-Busy -Activity 'Applying changes' -Status $m -Percent $p } }
+    $abort = { param($why) Clear-Busy; $res.Aborted = $true; $res.AbortReason = $why; Write-Log -Level WARN -Action 'APPLY_ABORT' -Message $why; return $res }
 
     if ($Script:DryRun) { return (& $abort 'Dry run: no changes are made.') }
     if (@($Tweaks).Count -eq 0) { return (& $abort 'Nothing was selected.') }
@@ -2717,7 +2751,7 @@ function Invoke-ApplyPlan {
     }
 
     # 1. System Restore point
-    & $say 'Creating a System Restore point...'
+    & $say 'Creating a System Restore point...' 5
     $rp = New-DivRestorePoint -Description $Description
     $res.RestorePoint = $rp
     if ($rp.Status -eq 'Failed') {
@@ -2728,7 +2762,7 @@ function Invoke-ApplyPlan {
     }
 
     # 2. DIVoptimizer backup (captured BEFORE any change), then 3. verify it
-    & $say 'Creating and verifying the backup...'
+    & $say 'Creating and verifying the backup...' 15
     $backupProblems = @()
     try {
         $s = New-Backup -Description $Description -ProfileName $ProfileName
@@ -2753,8 +2787,12 @@ function Invoke-ApplyPlan {
 
     # 4. Apply, one transaction per tweak
     $items = @()
+    $doneCount = 0
+    $totalCount = [Math]::Max(1, @($Tweaks).Count)
     foreach ($t in $Tweaks) {
-        & $say ("Applying: " + $t.Name)
+        $pct = 20 + [int](75 * $doneCount / $totalCount)
+        & $say ("Applying ({0} of {1}): {2}" -f ($doneCount + 1), $totalCount, $t.Name) $pct
+        $doneCount++
         $item = [pscustomobject]@{ Id = $t.Id; Name = $t.Name; Risk = $t.Risk; Status = 'Failed'; Message = ''; Before = ''; After = '' }
         try {
             $item.Before = Get-TweakCurrent -Tweak $t
@@ -2798,6 +2836,7 @@ function Invoke-ApplyPlan {
     if ($res.RestartNeeded) { $Script:RestartNeeded = $true; foreach ($r in $res.RestartReasons) { $Script:RestartReasons.Add($r) } }
 
     # 5. Finalise the backup (adds change list and any created power plan) and log
+    & $say 'Finalizing the backup record...' 97
     if ($Script:BackupSession) {
         try {
             $Script:BackupSession.Applied = [pscustomobject]@{ Successful = $res.Success; Failed = $res.Failed; Skipped = $res.Skipped }
@@ -2805,6 +2844,7 @@ function Invoke-ApplyPlan {
         } catch { Write-Tag WARN ('The backup could not be finalised: ' + $_.Exception.Message) }
     }
     if ($Script:SessionLogPath) { $res.LogFile = $Script:SessionLogPath }
+    Clear-Busy
     return $res
 }
 # ---------------------------------------------------------------
@@ -2854,7 +2894,13 @@ function Get-ResourceSnapshot {
 function New-BenchSnapshot {
     param([string]$Label)
     $samples = @()
-    for ($i = 0; $i -lt 5; $i++) { $c = Get-CpuLoad; if ($null -ne $c) { $samples += [double]$c }; Start-Sleep -Seconds 1 }
+    for ($i = 0; $i -lt 5; $i++) {
+        Write-Busy -Activity ('Benchmark: ' + $Label) -Status ('Sample {0} of 5' -f ($i + 1)) -Percent ($i * 20)
+        $c = Get-CpuLoad
+        if ($null -ne $c) { $samples += [double]$c }
+        Start-Sleep -Seconds 1
+    }
+    Clear-Busy
     $mem = Get-MemoryInfo
     $sto = Get-StorageInfo
     $startup = @(Get-StartupItems | Where-Object { $_.Enabled }).Count
@@ -3028,29 +3074,43 @@ function ConvertTo-SafeIdList {
     return ($ok -join ',')
 }
 
+function Get-RelaunchModeArgs {
+    # Switches that make the elevated copy start in the same mode. An empty result means the GUI.
+    param([bool]$IsConsole, [bool]$IsQuick, [string]$ProfileId = '')
+    $a = @()
+    if ($IsQuick) { $a += '-Quick' }
+    elseif ($ProfileId -and $Script:Profiles.Contains($ProfileId)) { $a += '-ProfileName'; $a += $ProfileId }
+    elseif ($IsConsole) { $a += '-Console' }
+    return $a
+}
+
 function Request-Elevation {
-    param([string]$Why, [string[]]$Ids = @(), [switch]$Silent)
+    param([string]$Why, [string[]]$Ids = @(), [switch]$Silent, [string[]]$ModeArgs = $null)
     Write-Tag INFO "Administrator is needed because: $Why"
     if (-not $Silent) {
         if (-not (Read-YesNo -Prompt 'Relaunch DIVoptimizer as Administrator now? (Windows will show a UAC prompt)' -DefaultYes)) { return $false }
     }
     $hostExe = (Get-Process -Id $PID).Path
     $safeIds = ConvertTo-SafeIdList -Ids $Ids
+    $mode = @()
+    if ($PSBoundParameters.ContainsKey('ModeArgs')) { $mode = @($ModeArgs) } elseif (-not $Script:IsGui) { $mode = @('-Console') }
+    foreach ($m in $mode) {
+        if ($m -notmatch '^-?[A-Za-z0-9]+$') { Write-Tag FAIL 'An unsafe relaunch argument was rejected.'; return $false }
+    }
     $a = @()
     if ($PSCommandPath) {
         # Started from a saved file: re-run that same file.
         $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $PSCommandPath + '"'))
-        if (-not $Script:IsGui) { $a += '-Console' }
+        $a += $mode
         if ($safeIds) { $a += '-Preselect'; $a += ('"' + $safeIds + '"') }
     } else {
         # Started with irm | iex: re-run the same one-liner from the fixed HTTPS URL.
         $url = Get-SelfUrl
         if (-not (Test-AllowedScriptUrl -Url $url)) { Write-Tag FAIL 'The script URL is not an allowed HTTPS GitHub address, so it will not be run elevated.'; return $false }
         $inner = "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod -Uri '$url' -UseBasicParsing)))"
-        if (-not $Script:IsGui) { $inner += ' -Console' }
+        if (@($mode).Count -gt 0) { $inner += (' ' + ($mode -join ' ')) }
         if ($safeIds) { $inner += " -Preselect '$safeIds'" }
         $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass')
-        if ($Script:IsGui) { $a += '-WindowStyle'; $a += 'Hidden' }
         $a += '-Command'
         $a += ('"' + $inner + '"')
     }
@@ -3507,6 +3567,7 @@ function Invoke-CleanupPage {
     $i = 0
     foreach ($t in $targets) {
         $i++
+        Write-Busy -Activity 'Estimating cleanup sizes' -Status $t.Name -Percent ([int](100 * ($i - 1) / $targets.Count))
         $est = Get-CleanupEstimate -Target $t -DetectLocked
         $line = '{0,-30} {1,10}   {2:N0} files' -f $t.Name, (Format-Bytes $est.Bytes), $est.Files
         if ($est.Locked -gt 0) { $line += ('   {0} currently locked{1}' -f $est.Locked, $(if ($est.LockedSampled) { ' (sampled)' } else { '' })) }
@@ -3516,6 +3577,7 @@ function Invoke-CleanupPage {
         $rec.Current = ('{0}, {1:N0} files' -f (Format-Bytes $est.Bytes), $est.Files)
         $recs += $rec
     }
+    Clear-Busy
     Write-Host ''
     Write-Host '   Cleanup removes files; it does not make games faster. Deleted files cannot be restored.' -ForegroundColor DarkGray
     $chosen = Read-TweakSelection -Recs $recs -Title 'CLEANUP'
@@ -3632,15 +3694,22 @@ function New-FullStateBackup {
     if (-not $scan) { $scan = Get-SystemScan }
     $s = New-Backup -Description 'Manual backup of current settings'
     $s.SystemRestore = [pscustomobject]@{ Status = 'Not attempted'; Message = 'Manual backup' }
-    foreach ($t in @(Get-TweakCatalog -Scan $scan)) {
+    $catalog = @(Get-TweakCatalog -Scan $scan)
+    $k = 0
+    foreach ($t in $catalog) {
+        $k++
+        Write-Busy -Activity 'Creating backup' -Status $t.Name -Percent ([int](85 * $k / [Math]::Max(1, $catalog.Count)))
         $c = Test-TweakCompat -Tweak $t -Windows $scan.Windows
         if (-not $c.Ok) { continue }
         if ($t.Kind -in @('Cleanup', 'Trim', 'App')) { continue }
         [void](Backup-Tweak -Tweak $t)
     }
+    Write-Busy -Activity 'Creating backup' -Status 'Startup items...' -Percent 90
     foreach ($it in @(Get-StartupItems | Where-Object { $_.Kind -ne 'Task' })) { [void](Backup-StartupItem -Item $it -TweakId 'manual') }
+    Write-Busy -Activity 'Creating backup' -Status 'Writing and verifying files...' -Percent 96
     Save-BackupSession
     $chk = Test-Backup -Dir $s.Dir
+    Clear-Busy
     return [pscustomobject]@{ Session = $s; Check = $chk }
 }
 
@@ -4109,11 +4178,6 @@ function Start-ConsoleApp {
     Show-SystemSummary -Scan $scan
     $mm = Test-ElevationUserMismatch
     if ($mm -and $scan.IsAdmin) { Write-Tag WARN $mm }
-    if (-not $scan.IsAdmin) {
-        Write-Host ''
-        Write-Host '   Running without Administrator. Scanning, reports and per-user settings work.' -ForegroundColor DarkGray
-        Write-Host '   Administrator is requested only when a change needs it, and you are told why first.' -ForegroundColor DarkGray
-    }
     Start-Sleep -Seconds 1
     if ($Script:PreselectIds -and @($Script:PreselectIds).Count -gt 0 -and $scan.IsAdmin) { Invoke-RecommendationsPage }
     Show-MainMenu
@@ -4127,6 +4191,11 @@ function Start-ConsoleApp {
 $Script:GuiWindow = $null
 $Script:GuiContent = $null
 $Script:GuiStatus = $null
+$Script:GuiBusyOverlay = $null
+$Script:GuiBusyTitle = $null
+$Script:GuiBusyDetail = $null
+$Script:GuiBusyBar = $null
+$Script:GuiStarted = $false
 $Script:GuiChecks = New-Object System.Collections.Generic.List[object]
 
 $Script:GuiXaml = @'
@@ -4184,6 +4253,16 @@ $Script:GuiXaml = @'
     <Border Grid.Row="2" Background="#161B22" BorderBrush="#30363D" BorderThickness="0,1,0,0" Padding="16,8">
       <TextBlock x:Name="StatusText" Text="Ready." Foreground="#8B949E" TextWrapping="Wrap"/>
     </Border>
+    <Grid x:Name="BusyOverlay" Grid.RowSpan="3" Background="#D90E151C" Visibility="Collapsed" Panel.ZIndex="10">
+      <Border Background="#161B22" BorderBrush="#30363D" BorderThickness="1" CornerRadius="6" Padding="30,24" HorizontalAlignment="Center" VerticalAlignment="Center" MinWidth="440" MaxWidth="640">
+        <StackPanel>
+          <TextBlock x:Name="BusyTitle" Text="Working..." FontSize="18" FontWeight="Bold" Foreground="White"/>
+          <TextBlock x:Name="BusyDetail" Text="" Foreground="#8B949E" Margin="0,6,0,16" TextWrapping="Wrap"/>
+          <ProgressBar x:Name="BusyBar" Height="8" Minimum="0" Maximum="100" IsIndeterminate="True" Foreground="#58C4DC" Background="#30363D" BorderThickness="0"/>
+          <TextBlock Text="Please wait. Nothing else can be clicked until this finishes." FontSize="11" Foreground="#6E7681" Margin="0,12,0,0"/>
+        </StackPanel>
+      </Border>
+    </Grid>
   </Grid>
 </Window>
 '@
@@ -4201,6 +4280,40 @@ function Set-GuiStatus {
     param([string]$Text)
     $Script:GuiStatus.Text = $Text
     Update-GuiUi
+}
+
+function Start-GuiBusy {
+    param([string]$Title = 'Working...', [string]$Detail = '')
+    if (-not $Script:GuiBusyOverlay) { return }
+    $Script:GuiBusyTitle.Text = $Title
+    $Script:GuiBusyDetail.Text = $Detail
+    $Script:GuiBusyBar.IsIndeterminate = $true
+    $Script:GuiBusyOverlay.Visibility = 'Visible'
+    $Script:GuiStatus.Text = $Title
+    Update-GuiUi
+}
+
+function Set-GuiBusy {
+    param([string]$Text, [int]$Percent = -1)
+    if (-not $Script:GuiBusyOverlay) { return }
+    $Script:GuiBusyDetail.Text = $Text
+    if ($Percent -ge 0) { $Script:GuiBusyBar.IsIndeterminate = $false; $Script:GuiBusyBar.Value = [Math]::Min(100, $Percent) }
+    else { $Script:GuiBusyBar.IsIndeterminate = $true }
+    $Script:GuiStatus.Text = $Text
+    Update-GuiUi
+}
+
+function Stop-GuiBusy {
+    if (-not $Script:GuiBusyOverlay) { return }
+    $Script:GuiBusyOverlay.Visibility = 'Collapsed'
+    Update-GuiUi
+}
+
+function Invoke-GuiWithBusy {
+    # Runs a task behind the loading overlay and ALWAYS removes the overlay afterwards, even on an error.
+    param([string]$Title, [string]$Detail = '', [scriptblock]$Action)
+    Start-GuiBusy -Title $Title -Detail $Detail
+    try { return (& $Action) } finally { Stop-GuiBusy }
 }
 
 function New-GuiText {
@@ -4377,8 +4490,11 @@ function Invoke-GuiApply {
     }
     if (-not (Show-GuiReviewDialog -Recs $Recs -Ready $ready)) { Set-GuiStatus 'Cancelled. Nothing was changed.'; return }
     $prompt = { param($m, $adv) return (Confirm-Gui ($m) 'DIVoptimizer - warning' 'Warning') }
-    $progress = { param($m) Set-GuiStatus $m }
-    $res = Invoke-ApplyPlan -Tweaks $tweaks -Description $Description -ProfileName $ProfileName -AdvancedConfirmed:$ready.HasAdvanced -Prompt $prompt -Progress $progress
+    $progress = { param($m, $p) Set-GuiBusy -Text $m -Percent $p }
+    Start-GuiBusy -Title 'Applying changes' -Detail 'Preparing...'
+    try {
+        $res = Invoke-ApplyPlan -Tweaks $tweaks -Description $Description -ProfileName $ProfileName -AdvancedConfirmed:$ready.HasAdvanced -Prompt $prompt -Progress $progress
+    } finally { Stop-GuiBusy }
     Set-GuiStatus 'Done.'
     Show-GuiResult -Res $res
 }
@@ -4392,7 +4508,7 @@ function Invoke-GuiRestore {
     if (-not (Test-Administrator)) { $msg += "`n`nNot running as Administrator: HKLM settings, services, tasks and power settings may fail to restore." }
     if (-not (Confirm-Gui $msg 'Confirm restore')) { return }
     Set-GuiStatus "Restoring $($Backup.Id)..."
-    $r = Restore-Backup -Dir $Backup.Path
+    $r = Invoke-GuiWithBusy -Title 'Restoring backup' -Detail "Restoring $($Backup.Id)..." -Action { Restore-Backup -Dir $Backup.Path }
     Set-GuiStatus 'Restore finished.'
     if ($r.Refused) { Show-GuiMessage $r.Message 'Restore refused' 'Warning'; return }
     Show-GuiMessage ("Restored: {0}`nFailed: {1}`nSkipped: {2}`n`nA restart or sign-out may be needed for some settings. See the log for details." -f $r.Success, $r.Failed, $r.Skipped) 'Restore finished'
@@ -4450,7 +4566,7 @@ function Show-GuiTweakPage {
 
 function Show-GuiScan {
     Set-GuiStatus 'Scanning (read-only)...'
-    $scan = Get-SystemScan
+    $scan = Invoke-GuiWithBusy -Title 'Scanning your PC' -Detail 'Reading hardware and settings. This does not change anything.' -Action { Get-SystemScan }
     Update-GuiSysLine
     Reset-GuiPage -Title 'System scan' -Subtitle 'Read-only. Nothing was changed.'
     $tb = New-Object System.Windows.Controls.TextBox
@@ -4465,7 +4581,7 @@ function Show-GuiScan {
 function Show-GuiRecommendations {
     param([string]$ProfileName = '')
     Set-GuiStatus 'Analysing...'
-    $scan = Get-SystemScan
+    $scan = Invoke-GuiWithBusy -Title 'Scanning your PC' -Detail 'Reading hardware and settings. This does not change anything.' -Action { Get-SystemScan }
     $recs = @(Get-Recommendations -Scan $scan -ProfileName $ProfileName)
     $title = 'Recommendations'
     if ($ProfileName) { $title = "$ProfileName Profile" }
@@ -4478,7 +4594,7 @@ function Show-GuiRecommendations {
 function Show-GuiCategory {
     param([string]$Title, [string[]]$Categories)
     Set-GuiStatus 'Reading settings...'
-    $scan = Get-SystemScan
+    $scan = Invoke-GuiWithBusy -Title 'Scanning your PC' -Detail 'Reading hardware and settings. This does not change anything.' -Action { Get-SystemScan }
     $recs = @(Get-Recommendations -Scan $scan -All | Where-Object { $Categories -contains $_.Category -and $_.Risk -ne 'ADVANCED' })
     Show-GuiTweakPage -Title $Title -Subtitle 'Current to new values are shown for every option.' -Recs $recs -Description $Title
     Set-GuiStatus 'Ready.'
@@ -4486,7 +4602,7 @@ function Show-GuiCategory {
 
 function Invoke-GuiQuickOptimize {
     Set-GuiStatus 'Analysing...'
-    $scan = Get-SystemScan
+    $scan = Invoke-GuiWithBusy -Title 'Scanning your PC' -Detail 'Reading hardware and settings. This does not change anything.' -Action { Get-SystemScan }
     $set = @(Get-QuickOptimizeSet -Scan $scan)
     if ($set.Count -eq 0) { Show-GuiMessage 'Nothing LOW RISK needs changing on this PC.'; Set-GuiStatus 'Ready.'; return }
     Invoke-GuiApply -Recs $set -Description 'Quick Optimize'
@@ -4494,22 +4610,28 @@ function Invoke-GuiQuickOptimize {
 
 function Show-GuiOptionalApps {
     Reset-GuiPage -Title 'Optional apps' -Subtitle 'You choose what to remove. Removal is NOT automatically reversible; apps may need to be reinstalled from Microsoft Store or another official source.'
-    $installed = @{}
-    foreach ($p in @(Get-AppxPackage -ErrorAction SilentlyContinue)) { $installed[[string]$p.Name] = $true }
-    $recs = @()
-    foreach ($e in @($Script:AppCatalog)) {
-        if (-not $installed.ContainsKey([string]$e.Package)) { continue }
-        if (Test-PackageProtected -Name $e.Package) { continue }
-        $r = ConvertTo-RecFromTweak -Tweak (New-AppTweak -Entry $e)
-        $recs += $r
-    }
+    $recs = @(Invoke-GuiWithBusy -Title 'Checking installed apps' -Detail 'Reading the list of Windows apps...' -Action {
+        $installed = @{}
+        foreach ($p in @(Get-AppxPackage -ErrorAction SilentlyContinue)) { $installed[[string]$p.Name] = $true }
+        $out = @()
+        $cat = @($Script:AppCatalog)
+        $k = 0
+        foreach ($e in $cat) {
+            $k++
+            Set-GuiBusy -Text ('Checking ' + $e.Label) -Percent ([int](100 * $k / $cat.Count))
+            if (-not $installed.ContainsKey([string]$e.Package)) { continue }
+            if (Test-PackageProtected -Name $e.Package) { continue }
+            $out += (ConvertTo-RecFromTweak -Tweak (New-AppTweak -Entry $e))
+        }
+        return $out
+    })
     $Script:GuiContent.Children.Clear()
     Show-GuiTweakPage -Title 'Optional apps' -Subtitle 'You choose what to remove. Removal is NOT automatically reversible; apps may need to be reinstalled from Microsoft Store or another official source.' -Recs $recs -Description 'Optional Apps'
 }
 
 function Show-GuiStartup {
     Reset-GuiPage -Title 'Startup manager' -Subtitle 'Entries are never deleted; only their enabled flag changes. Impact shown is observed RAM of running programs.'
-    $items = @(Get-StartupItems -IncludeTasks)
+    $items = @(Invoke-GuiWithBusy -Title 'Reading startup items' -Detail 'Including scheduled tasks that run at sign-in...' -Action { Get-StartupItems -IncludeTasks })
     if ($items.Count -eq 0) { Add-GuiChild $Script:GuiContent (New-GuiText -Text 'No startup items found.'); return }
     foreach ($it in $items) {
         $row = New-Object System.Windows.Controls.Grid
@@ -4543,15 +4665,21 @@ function Show-GuiStartup {
 
 function Show-GuiCleanup {
     Reset-GuiPage -Title 'Cleanup' -Subtitle 'Recovers disk space and removes temporary/stale data. It is not an optimization and does not make games faster. Deleted files cannot be restored.'
-    Set-GuiStatus 'Estimating sizes...'
-    $recs = @()
-    foreach ($t in @(Get-CleanupTargets)) {
-        $est = Get-CleanupEstimate -Target $t -DetectLocked
-        $rec = ConvertTo-RecFromTweak -Tweak (New-CleanupTweak -Target $t)
-        $rec.Current = ('{0}, {1:N0} files{2}' -f (Format-Bytes $est.Bytes), $est.Files, $(if ($est.Locked -gt 0) { ", $($est.Locked) currently locked" } else { '' }))
-        $rec.DefaultSelected = $false
-        $recs += $rec
-    }
+    $recs = @(Invoke-GuiWithBusy -Title 'Estimating cleanup sizes' -Detail 'Counting files and checking which are in use...' -Action {
+        $out = @()
+        $targets = @(Get-CleanupTargets)
+        $k = 0
+        foreach ($t in $targets) {
+            Set-GuiBusy -Text ('Checking ' + $t.Name) -Percent ([int](100 * $k / $targets.Count))
+            $k++
+            $est = Get-CleanupEstimate -Target $t -DetectLocked
+            $rec = ConvertTo-RecFromTweak -Tweak (New-CleanupTweak -Target $t)
+            $rec.Current = ('{0}, {1:N0} files{2}' -f (Format-Bytes $est.Bytes), $est.Files, $(if ($est.Locked -gt 0) { ", $($est.Locked) currently locked" } else { '' }))
+            $rec.DefaultSelected = $false
+            $out += $rec
+        }
+        return $out
+    })
     Show-GuiTweakPage -Title 'Cleanup' -Subtitle 'Recovers disk space and removes temporary/stale data. It is not an optimization. Deleted files cannot be restored.' -Recs $recs -Description 'Cleanup'
     Set-GuiStatus 'Ready.'
 }
@@ -4564,7 +4692,7 @@ function Show-GuiNetwork {
     Add-GuiChild $d (New-GuiButton -Text 'IP configuration' -OnClick { Show-GuiTextDialog -Title 'IP configuration' -Text ((Get-NetIPConfiguration | Format-List | Out-String)) })
     Add-GuiChild $d (New-GuiButton -Text 'DNS servers' -OnClick { Show-GuiTextDialog -Title 'DNS servers' -Text ((Get-DnsClientServerAddress | Format-Table -AutoSize | Out-String)) })
     Add-GuiChild $d (New-GuiButton -Text 'Adapters' -OnClick { Show-GuiTextDialog -Title 'Network adapters' -Text ((Get-NetAdapter | Format-Table -AutoSize | Out-String)) })
-    Add-GuiChild $d (New-GuiButton -Text 'Ping 1.1.1.1' -OnClick { Set-GuiStatus 'Pinging...'; Show-GuiTextDialog -Title 'Ping' -Text ((Test-Connection -ComputerName 1.1.1.1 -Count 4 | Format-Table -AutoSize | Out-String)); Set-GuiStatus 'Ready.' })
+    Add-GuiChild $d (New-GuiButton -Text 'Ping 1.1.1.1' -OnClick { Set-GuiStatus 'Pinging...'; Show-GuiTextDialog -Title 'Ping' -Text (Invoke-GuiWithBusy -Title 'Pinging 1.1.1.1' -Detail 'Sending 4 test packets...' -Action { Test-Connection -ComputerName 1.1.1.1 -Count 4 | Format-Table -AutoSize | Out-String }); Set-GuiStatus 'Ready.' })
     Add-GuiChild $p $d
     Add-GuiChild $p (New-GuiText -Text 'REPAIR' -Size 12 -Bold -Color '#58C4DC' -Margin '0,14,0,0')
     Add-GuiChild $p (New-GuiButton -Text 'Flush DNS cache' -Width 180 -OnClick { try { [void](Invoke-NetworkTool -Tool FlushDns); Show-GuiMessage 'DNS cache flushed.' } catch { Show-GuiMessage $_.Exception.Message 'Failed' 'Error' } })
@@ -4627,8 +4755,7 @@ function Show-GuiBackups {
     $bar.Margin = '0,10,0,0'
     Add-GuiChild $bar (New-GuiButton -Text 'CREATE BACKUP' -OnClick {
         if (-not (Confirm-Gui 'Create a backup of the current values of every setting DIVoptimizer manages?')) { return }
-        Set-GuiStatus 'Creating backup...'
-        $r = New-FullStateBackup
+        $r = Invoke-GuiWithBusy -Title 'Creating backup' -Detail 'Recording the current value of every setting DIVoptimizer manages...' -Action { New-FullStateBackup }
         if ($r.Check.Ok) { Show-GuiMessage "Backup $($r.Session.Id) created and verified." } else { Show-GuiMessage ('Backup verification problems:' + "`n" + (@($r.Check.Problems) -join "`n")) 'Backup' 'Warning' }
         Show-GuiBackups
     })
@@ -4706,7 +4833,7 @@ function Show-GuiHistory {
 
 function Show-GuiServices {
     Set-GuiStatus 'Reading services...'
-    $scan = Get-SystemScan
+    $scan = Invoke-GuiWithBusy -Title 'Scanning your PC' -Detail 'Reading hardware and settings. This does not change anything.' -Action { Get-SystemScan }
     $recs = @()
     foreach ($e in @($Script:ServiceCatalog)) {
         $info = Get-ServiceInfo -Name $e.Name
@@ -4753,7 +4880,7 @@ function Show-GuiAdvanced {
         Add-Type -AssemblyName Microsoft.VisualBasic
         $n = [Microsoft.VisualBasic.Interaction]::InputBox('Snapshot name (letters, digits, - _), for example: before', 'Benchmark', 'before')
         if (-not $n) { return }
-        try { Set-GuiStatus 'Measuring for about 5 seconds...'; $snap = New-BenchSnapshot -Label $n; $path = Save-BenchSnapshot -Snapshot $snap -Name $n; Show-GuiMessage "Saved $path"; Set-GuiStatus 'Ready.' } catch { Show-GuiMessage $_.Exception.Message 'Failed' 'Error' }
+        try { $snap = Invoke-GuiWithBusy -Title 'Benchmark' -Detail 'Taking 5 samples (about 5 seconds). Do not use the PC meanwhile.' -Action { New-BenchSnapshot -Label $n }; $path = Save-BenchSnapshot -Snapshot $snap -Name $n; Show-GuiMessage "Saved $path"; Set-GuiStatus 'Ready.' } catch { Show-GuiMessage $_.Exception.Message 'Failed' 'Error' }
     })
     Add-GuiChild $bw (New-GuiButton -Text 'Compare last two' -OnClick {
         $s = @(Get-BenchSnapshots)
@@ -4767,8 +4894,7 @@ function Show-GuiAdvanced {
 
 function Show-GuiResources {
     Reset-GuiPage -Title 'Resource monitor' -Subtitle 'Read-only. Click a column header to sort. DIVoptimizer never ends processes.'
-    Set-GuiStatus 'Sampling...'
-    $snap = Get-ResourceSnapshot
+    $snap = Invoke-GuiWithBusy -Title 'Sampling resources' -Detail 'Measuring CPU, memory, disk and network for one second...' -Action { Get-ResourceSnapshot }
     Add-GuiChild $Script:GuiContent (New-GuiText -Text ("CPU {0}%     RAM {1}% ({2} of {3} GB)     Disk {4} GB free, busy {5}     Network down {6} KB/s, up {7} KB/s" -f $snap.CpuPct, $snap.RamPct, $snap.RamUsedGB, $snap.RamTotalGB, $snap.DiskFreeGB, $(if ($null -ne $snap.DiskBusyPct) { "$($snap.DiskBusyPct)%" } else { 'n/a' }), $snap.NetRxKBs, $snap.NetTxKBs) -Size 14)
     $grid = New-Object System.Windows.Controls.DataGrid
     $grid.Height = 440; $grid.IsReadOnly = $true; $grid.AutoGenerateColumns = $true; $grid.CanUserSortColumns = $true
@@ -4794,7 +4920,7 @@ function Show-GuiReportAbout {
             $dlg.FileName = ("DIVoptimizer-Report-{0}.{1}" -f (Get-Date -Format 'yyyy-MM-dd'), $fmt)
             $dlg.Filter = ("{0} file|*.{1}" -f $fmt.ToUpper(), $fmt)
             if ($dlg.ShowDialog() -eq $true) {
-                try { Export-SystemReport -Scan (Get-SystemScan) -Path $dlg.FileName -Format $fmt; Show-GuiMessage "Report saved:`n$($dlg.FileName)" } catch { Show-GuiMessage $_.Exception.Message 'Failed' 'Error' }
+                try { Export-SystemReport -Scan (Invoke-GuiWithBusy -Title 'Preparing report' -Action { Get-SystemScan }) -Path $dlg.FileName -Format $fmt; Show-GuiMessage "Report saved:`n$($dlg.FileName)" } catch { Show-GuiMessage $_.Exception.Message 'Failed' 'Error' }
             }
         })
     }
@@ -4803,12 +4929,11 @@ function Show-GuiReportAbout {
     Add-GuiChild $p (New-GuiText -Text 'Nothing is downloaded or run unless you ask, and nothing is installed automatically.' -Size 12 -Color '#8B949E')
     Add-GuiChild $p (New-GuiButton -Text 'Check for updates' -Width 160 -OnClick {
         try {
-            Set-GuiStatus 'Checking...'
-            $u = Get-UpdateInfo
+            $u = Invoke-GuiWithBusy -Title 'Checking for updates' -Detail 'Contacting the update source over HTTPS...' -Action { Get-UpdateInfo }
             $txt = "Current: v$($u.Current)`nLatest: v$($u.Latest)`n`nRelease notes:`n$($u.Notes)`n`nDownload source:`n$($u.Url)`n`nSHA-256:`n$($u.Sha256)"
             if ($u.Newer) {
                 if (Confirm-Gui ($txt + "`n`nDownload to a staging folder and verify the SHA-256? It will NOT be installed or run.") 'Update available') {
-                    $r = Save-UpdatePackage -Info $u
+                    $r = Invoke-GuiWithBusy -Title 'Downloading update' -Detail 'Downloading and verifying the SHA-256. Nothing is installed.' -Action { Save-UpdatePackage -Info $u }
                     Show-GuiMessage ("SHA-256 verified.`nSignature status: $($r.Signature)`n`nPackage: $($r.Zip)`nExtracted to: $($r.Folder)`n`nReview it and run the new DIVoptimizer.ps1 yourself.")
                 }
             } else { Show-GuiMessage ($txt + "`n`nYou are on the latest version.") 'Up to date' }
@@ -4895,22 +5020,39 @@ function Show-GuiDashboard {
 function Start-GuiApp {
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
     $Script:IsGui = $true
-    $scan = Get-SystemScan
-    if (-not $scan.Windows.Supported) {
-        [void][System.Windows.MessageBox]::Show("This PC is not supported: $($scan.Windows.Status)", 'DIVoptimizer', 'OK', 'Error')
-        return
-    }
     $reader = New-Object System.Xml.XmlNodeReader ([xml]$Script:GuiXaml)
     $Script:GuiWindow = [Windows.Markup.XamlReader]::Load($reader)
     $Script:GuiContent = $Script:GuiWindow.FindName('Content')
     $Script:GuiStatus = $Script:GuiWindow.FindName('StatusText')
     $Script:GuiSysLine = $Script:GuiWindow.FindName('SysLine')
+    $Script:GuiBusyOverlay = $Script:GuiWindow.FindName('BusyOverlay')
+    $Script:GuiBusyTitle = $Script:GuiWindow.FindName('BusyTitle')
+    $Script:GuiBusyDetail = $Script:GuiWindow.FindName('BusyDetail')
+    $Script:GuiBusyBar = $Script:GuiWindow.FindName('BusyBar')
     $Script:GuiWindow.FindName('VersionText').Text = ("v{0}  |  by {1}" -f $Script:Version, $Script:Author)
     $Script:GuiWindow.FindName('HomeBtn').Add_Click({ Show-GuiDashboard })
-    $mm = Test-ElevationUserMismatch
-    Show-GuiDashboard
-    if ($Script:PreselectIds -and @($Script:PreselectIds).Count -gt 0 -and $scan.IsAdmin) { Show-GuiRecommendations }
-    if ($mm -and $scan.IsAdmin) { Set-GuiStatus $mm }
+    $Script:GuiStarted = $false
+    # The window appears immediately; the first scan runs behind the loading overlay.
+    $Script:GuiWindow.Add_ContentRendered({
+        if ($Script:GuiStarted) { return }
+        $Script:GuiStarted = $true
+        try {
+            $scan = Invoke-GuiWithBusy -Title 'Scanning your PC' -Detail 'Reading hardware and settings. This does not change anything.' -Action { Get-SystemScan }
+            if (-not $scan.Windows.Supported) {
+                Show-GuiMessage ("This PC is not supported: " + $scan.Windows.Status) 'DIVoptimizer' 'Error'
+                $Script:GuiWindow.Close()
+                return
+            }
+            $mm = Test-ElevationUserMismatch
+            Show-GuiDashboard
+            if ($Script:PreselectIds -and @($Script:PreselectIds).Count -gt 0) { Show-GuiRecommendations }
+            if ($mm) { Set-GuiStatus $mm }
+        } catch {
+            Write-Log -Level FAIL -Action 'GUI_STARTUP' -ErrorText $_.Exception.ToString()
+            Stop-GuiBusy
+            Show-GuiMessage ('The startup scan failed: ' + $_.Exception.Message) 'DIVoptimizer' 'Error'
+        }
+    })
     [void]$Script:GuiWindow.ShowDialog()
 }
 
@@ -4978,6 +5120,24 @@ function Invoke-DIVoptimizerMain {
 
     if ($ProfileName -and -not $Script:Profiles.Contains($ProfileName)) {
         Write-Host ("Unknown profile '{0}'. Choose one of: {1}" -f $ProfileName, (@($Script:Profiles.Keys) -join ', ')) -ForegroundColor Red
+        return
+    }
+
+    # Administrator is required for everything below (it changes system settings, services, tasks and restore points).
+    # The read-only modes above (-Scan, -WhatIf, -Report, -CheckUpdate, -ShowVersion) do not need it.
+    if (-not (Test-Administrator)) {
+        Write-Host ''
+        Write-Host '  DIVoptimizer needs Administrator rights.' -ForegroundColor Yellow
+        Write-Host '  It backs up and changes system settings, services and scheduled tasks, and creates restore points.' -ForegroundColor DarkGray
+        Write-Host '  Windows will now ask for permission (UAC). Nothing is changed until you review and approve it.' -ForegroundColor DarkGray
+        $modeArgs = @(Get-RelaunchModeArgs -IsConsole ([bool]$Console) -IsQuick ([bool]$Quick) -ProfileId $ProfileName)
+        $ok = Request-Elevation -Why 'DIVoptimizer must run as Administrator' -Ids $Script:PreselectIds -Silent -ModeArgs $modeArgs
+        if ($ok) {
+            Write-Host '  A new Administrator window was opened. This window can be closed.' -ForegroundColor Green
+        } else {
+            Write-Host '  Administrator was not granted, so nothing was started.' -ForegroundColor Red
+            Write-Host '  For a read-only look without Administrator, run with -Scan or -WhatIf.' -ForegroundColor DarkGray
+        }
         return
     }
 
