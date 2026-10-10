@@ -4,128 +4,216 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DIVoptimizer - see every Windows change before it happens</title>
-<meta name="description" content="A transparent, hardware-aware, reversible Windows optimization utility. Scan, preview, back up, apply, verify, restore.">
+<meta name="description" content="A transparent, reversible Windows optimization utility. Scan, preview every change, back up, apply, verify, undo.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-:root{--paper:#f3f5f7;--panel:#fff;--ink:#14202b;--mute:#566574;--rule:#cbd5dd;--blue:#0b6e99;--blue-ink:#fff;--warn:#9a4a05;--ok:#1b6b3a;--code:#0f1a24;--code-ink:#e3edf4}
-@media (prefers-color-scheme:dark){:root{--paper:#0e151c;--panel:#141e27;--ink:#e6eef4;--mute:#93a3b1;--rule:#26343f;--blue:#5cb8e0;--blue-ink:#06222f;--warn:#e0a35a;--ok:#6cc98f;--code:#091017;--code-ink:#e3edf4}}
+:root{
+  --bg:#0b1220;--surface:#131d33;--raise:#1a2744;--line:#25324d;
+  --text:#e8eef8;--mute:#8da0bf;
+  --brand:#7c8cff;--brand-ink:#0b1220;
+  --add:#5be3a8;--del:#ff7a6b;--warn:#f0b35a;
+  --glow:rgba(124,140,255,.16);
+  --display:"Bricolage Grotesque","Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+  --body:"Instrument Sans","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --mono:"JetBrains Mono","Cascadia Code",Consolas,monospace;
+}
+@media (prefers-color-scheme:light){:root{
+  --bg:#f4f6fb;--surface:#ffffff;--raise:#eef1f9;--line:#d5dcec;
+  --text:#121a2b;--mute:#52627f;--brand:#4a5bd8;--brand-ink:#ffffff;
+  --add:#0d7a4f;--del:#c23b2c;--warn:#8f5a0a;--glow:rgba(74,91,216,.12);
+}}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
-body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif}
-a{color:var(--blue)}
-:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
-.wrap{max-width:1040px;margin:0 auto;padding:0 24px}
-header{display:flex;justify-content:space-between;align-items:center;padding:20px 0}
-.brand{font:700 20px "Segoe UI Variable Display","Segoe UI",sans-serif;letter-spacing:-.01em;color:var(--ink);text-decoration:none}
-.brand b{color:var(--blue)}
-nav a{margin-left:20px;color:var(--mute);text-decoration:none;font-size:15px}
-nav a:hover{color:var(--ink)}
-.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center;padding:40px 0 56px}
-h1{font:700 clamp(2rem,4.6vw,3.3rem)/1.08 "Segoe UI Variable Display","Segoe UI",sans-serif;letter-spacing:-.025em;margin:0 0 16px}
-.lede{font-size:18px;color:var(--mute);max-width:34em;margin:0 0 24px}
-.cmd{background:var(--code);color:var(--code-ink);border-radius:6px;display:flex;align-items:stretch;overflow:hidden}
-.cmd code{flex:1;padding:14px 16px;font:15px/1.5 "Cascadia Code","Cascadia Mono",Consolas,monospace;overflow-x:auto;white-space:nowrap}
-.cmd button{border:0;background:var(--blue);color:var(--blue-ink);font:600 15px "Segoe UI",sans-serif;padding:0 20px;cursor:pointer}
-.cmd button:hover{filter:brightness(1.1)}
-.hint{font-size:14px;color:var(--mute);margin:10px 0 0}
-.receipt{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:20px 22px;font:14px/1.7 "Cascadia Code","Cascadia Mono",Consolas,monospace;box-shadow:6px 6px 0 var(--rule)}
-.receipt .t{color:var(--mute);margin:0 0 10px}
-.row{display:grid;grid-template-columns:1fr auto;gap:2px 14px;padding:8px 0;border-top:1px dashed var(--rule)}
-.row small{grid-column:1/-1;color:var(--mute);font-size:13px}
-.tag{font-weight:700;font-size:12px}
-.low{color:var(--ok)}.opt{color:var(--warn)}.adv{color:#c03a2b}
-.end{border-top:2px solid var(--ink);margin-top:6px;padding-top:10px;font-weight:700;color:var(--ok)}
-section{padding:44px 0;border-top:1px solid var(--rule)}
-h2{font:700 1.5rem/1.2 "Segoe UI Variable Display","Segoe UI",sans-serif;margin:0 0 20px;letter-spacing:-.01em}
-.flow{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(6,1fr);gap:0;border:1px solid var(--rule);border-radius:6px;background:var(--panel)}
-.flow li{padding:16px 14px;border-left:1px solid var(--rule);font-size:15px}
-.flow li:first-child{border-left:0}
-.flow b{display:block;font-size:13px;color:var(--blue);margin-bottom:4px}
-.cols{display:grid;grid-template-columns:1fr 1fr;gap:40px}
-table{width:100%;border-collapse:collapse;font-size:15px}
-td,th{text-align:left;padding:10px 8px;border-bottom:1px solid var(--rule);vertical-align:top}
-td code{font:13px Consolas,"Cascadia Mono",monospace;background:var(--panel);border:1px solid var(--rule);padding:2px 6px;border-radius:3px;word-break:break-all}
-.notice{background:var(--panel);border-left:4px solid var(--warn);padding:16px 18px;border-radius:0 6px 6px 0}
+body{margin:0;background:var(--bg);color:var(--text);font:17px/1.65 var(--body);-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;z-index:-1;background:radial-gradient(900px 500px at 82% -10%,var(--glow),transparent 70%)}
+a{color:var(--brand)}
+:focus-visible{outline:3px solid var(--brand);outline-offset:3px;border-radius:6px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+.hero>*,.split>*{min-width:0}
+
+header{display:flex;justify-content:space-between;align-items:center;padding:22px 0}
+.brand{font:800 21px var(--display);letter-spacing:-.02em;color:var(--text);text-decoration:none}
+.brand b{color:var(--brand)}
+nav{display:flex;gap:6px;align-items:center}
+nav a{color:var(--mute);text-decoration:none;font-size:15px;padding:8px 12px;border-radius:8px}
+nav a:hover{color:var(--text);background:var(--surface)}
+nav a.gh{border:1px solid var(--line);color:var(--text)}
+
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.95fr);gap:56px;align-items:center;padding:48px 0 88px}
+h1{font:800 clamp(2.4rem,5.2vw,4.1rem)/1.02 var(--display);letter-spacing:-.035em;margin:0 0 20px}
+.lede{font-size:19px;color:var(--mute);max-width:31em;margin:0 0 28px}
+.cmd{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.cmd code{flex:1;min-width:0;padding:15px 18px;font:15px/1.5 var(--mono);overflow-x:auto;white-space:nowrap;color:var(--text)}
+.cmd button{border:0;background:var(--brand);color:var(--brand-ink);font:600 15px var(--body);padding:0 22px;cursor:pointer}
+.cmd button:hover{filter:brightness(1.08)}
+.hint{font-size:14.5px;color:var(--mute);margin:12px 0 0;max-width:34em}
+
+/* The one showpiece: a working before/after panel */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 30px 60px -30px rgba(0,0,0,.55);overflow:hidden}
+.panel-top{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);font-size:14px;color:var(--mute)}
+.panel-top b{color:var(--text);font-weight:600}
+.item{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;padding:16px 18px;border-bottom:1px solid var(--line);align-items:start}
+.sw{appearance:none;-webkit-appearance:none;width:42px;height:24px;border-radius:99px;background:var(--raise);border:1px solid var(--line);position:relative;cursor:pointer;margin:2px 0 0;transition:background .2s}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:var(--mute);transition:transform .2s,background .2s}
+.sw:checked{background:var(--brand);border-color:var(--brand)}
+.sw:checked::after{transform:translateX(18px);background:var(--brand-ink)}
+.sw:disabled{opacity:.55;cursor:default}
+.item label{font-weight:600;cursor:pointer;line-height:1.35}
+.diff{grid-column:2;font:13.5px/1.6 var(--mono);color:var(--mute);display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.old{color:var(--del);text-decoration:line-through;text-decoration-thickness:1px}
+.new{color:var(--add)}
+.item.applied .old{opacity:.45}
+.tier{font:600 12px var(--body);padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--mute)}
+.tier.adv{color:var(--warn);border-color:currentColor}
+.note{grid-column:2;font-size:13.5px;color:var(--mute)}
+.panel-foot{display:flex;gap:10px;align-items:center;padding:14px 18px;background:var(--raise)}
+.status{flex:1;font-size:14px;color:var(--mute)}
+.status.ok{color:var(--add)}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--text);font:600 14.5px var(--body);padding:9px 16px;border-radius:9px;cursor:pointer}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
+.btn:hover:not(:disabled){filter:brightness(1.1)}
+.btn:disabled{opacity:.45;cursor:default}
+
+section{padding:76px 0;border-top:1px solid var(--line)}
+h2{font:700 clamp(1.7rem,3vw,2.3rem)/1.1 var(--display);letter-spacing:-.025em;margin:0 0 14px}
+.sub{color:var(--mute);max-width:36em;margin:0 0 36px}
+.steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(6,1fr);gap:12px;counter-reset:s}
+.steps li{counter-increment:s;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 16px;font-size:15px;color:var(--mute)}
+.steps li::before{content:counter(s);display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--glow);color:var(--brand);font:600 13px var(--mono);margin-bottom:12px}
+.steps b{display:block;color:var(--text);font:700 17px var(--display);margin-bottom:4px}
+
+.split{display:grid;grid-template-columns:1fr 1fr;gap:56px}
+.split h3{font:700 1.2rem var(--display);margin:0 0 10px}
+.split ul{margin:0;padding-left:1.1em;color:var(--mute)}
+.split li{margin:6px 0}
+
+.cmds{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface)}
+.cmds div{display:grid;grid-template-columns:230px minmax(0,1fr);gap:16px;padding:14px 18px;border-bottom:1px solid var(--line);align-items:center}
+.cmds div:last-child{border-bottom:0}
+.cmds span{font-weight:500}
+.cmds code{font:13.5px/1.5 var(--mono);color:var(--mute);overflow-x:auto;white-space:nowrap;padding:2px 0}
+
+.notice{border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:12px;background:var(--surface);padding:20px 24px;max-width:46em}
 .notice p{margin:0 0 8px}.notice p:last-child{margin:0}
-footer{border-top:1px solid var(--rule);padding:28px 0 48px;color:var(--mute);font-size:14px}
-@media (max-width:860px){.hero,.cols{grid-template-columns:1fr}.flow{grid-template-columns:1fr 1fr}.flow li{border-left:0;border-top:1px solid var(--rule)}.flow li:nth-child(-n+2){border-top:0}}
-@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+footer{border-top:1px solid var(--line);padding:32px 0 56px;color:var(--mute);font-size:14.5px}
+
+@media (max-width:900px){
+  .hero,.split{grid-template-columns:minmax(0,1fr);gap:40px}
+  .steps{grid-template-columns:1fr 1fr}
+  .cmds div{grid-template-columns:minmax(0,1fr);gap:6px}
+  nav a:not(.gh){display:none}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.sw,.sw::after{transition:none}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <a class="brand" href="#top">DIV<b>optimizer</b></a>
-    <nav><a href="#how">How it works</a><a href="#commands">Commands</a><a href="#trust">Before you run it</a><a href="https://github.com/Bulbug/DIVoptimizer">Source</a></nav>
+    <nav><a href="#how">How it works</a><a href="#commands">Commands</a><a href="#trust">Before you run it</a><a class="gh" href="https://github.com/Bulbug/DIVoptimizer">GitHub</a></nav>
   </header>
 
   <main id="top">
     <div class="hero">
       <div>
-        <h1>See every Windows change before it happens. Undo it after.</h1>
-        <p class="lede">DIVoptimizer scans your PC, recommends only what fits your hardware, shows the exact current and new value of each setting, backs up what it touches, and restores it on request.</p>
+        <h1>Every Windows change, shown before it happens.</h1>
+        <p class="lede">DIVoptimizer scans your PC, suggests only what fits your hardware, shows the current and new value of each setting, backs it up, and puts it back when you ask.</p>
         <div class="cmd">
           <code id="main-cmd">irm YOUR-DOMAIN/run | iex</code>
-          <button type="button" id="copy" data-target="main-cmd">Copy</button>
+          <button type="button" id="copy">Copy</button>
         </div>
-        <p class="hint">Paste into PowerShell. It opens a window where you choose what to apply. Nothing changes until you approve it.</p>
+        <p class="hint">Paste into PowerShell. A window opens where you choose what to apply. Nothing changes until you approve it.</p>
       </div>
-      <div class="receipt" aria-label="Example dry run output">
-        <p class="t">DIVoptimizer -WhatIf &nbsp;(example)</p>
-        <div class="row"><span>Disable Game DVR</span><span class="tag low">LOW RISK</span><small>Default → Disabled</small></div>
-        <div class="row"><span>Turn off advertising ID</span><span class="tag opt">OPTIONAL</span><small>Enabled → Disabled</small></div>
-        <div class="row"><span>Disable SysMain</span><span class="tag adv">ADVANCED</span><small>Running → Disabled &nbsp;(never selected for you)</small></div>
-        <div class="end">NO CHANGES WERE MADE.</div>
+
+      <div class="panel" role="group" aria-label="Interactive example of a change preview">
+        <div class="panel-top"><b>Preview of changes</b><span id="count">2 selected</span></div>
+        <div class="item">
+          <input class="sw" type="checkbox" id="c1" checked>
+          <label for="c1">Disable Game DVR background recording</label>
+          <div class="diff"><span class="old">Default</span><span>to</span><span class="new">Disabled</span><span class="tier">Safe</span></div>
+        </div>
+        <div class="item">
+          <input class="sw" type="checkbox" id="c2" checked>
+          <label for="c2">Turn off the advertising ID</label>
+          <div class="diff"><span class="old">Enabled</span><span>to</span><span class="new">Disabled</span><span class="tier">Balanced</span></div>
+        </div>
+        <div class="item">
+          <input class="sw" type="checkbox" id="c3">
+          <label for="c3">Disable SysMain service</label>
+          <div class="diff"><span class="old">Running</span><span>to</span><span class="new">Disabled</span><span class="tier adv">Advanced</span></div>
+          <div class="note">Never selected for you.</div>
+        </div>
+        <div class="panel-foot">
+          <span class="status" id="status" aria-live="polite">Nothing has changed. This is an example.</span>
+          <button class="btn" id="undo" disabled>Undo</button>
+          <button class="btn primary" id="apply">Apply</button>
+        </div>
       </div>
     </div>
 
     <section id="how">
       <h2>What happens when you run it</h2>
-      <ol class="flow">
+      <p class="sub">The same six steps every time, in this order.</p>
+      <ol class="steps">
         <li><b>Scan</b>Reads your hardware and settings. Changes nothing.</li>
         <li><b>Recommend</b>Advice differs for a laptop, a desktop, 8 GB or 32 GB.</li>
-        <li><b>Preview</b>Current → new, risk level, downside, restart needed.</li>
-        <li><b>Back up</b>Verified before anything is touched.</li>
-        <li><b>Apply</b>Only what you approved. Each change is verified.</li>
-        <li><b>Restore</b>From the app, or from the emergency reset script.</li>
+        <li><b>Preview</b>Current value, new value, risk, downside, restart.</li>
+        <li><b>Back up</b>Saved and verified before anything is touched.</li>
+        <li><b>Apply</b>Only what you approved. Each change is checked.</li>
+        <li><b>Undo</b>From the app or the emergency reset script.</li>
       </ol>
     </section>
 
     <section id="commands">
       <h2>Commands</h2>
-      <table>
-        <tr><th>To</th><th>Run in PowerShell</th></tr>
-        <tr><td>Open the app</td><td><code data-cmd="irm {o}/run | iex"></code></td></tr>
-        <tr><td>Scan only (changes nothing)</td><td><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -Scan"></code></td></tr>
-        <tr><td>Dry run (shows what would change)</td><td><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -WhatIf"></code></td></tr>
-        <tr><td>Text menu instead of the window</td><td><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -Console"></code></td></tr>
-        <tr><td>Emergency restore</td><td><code data-cmd="irm {o}/reset | iex"></code></td></tr>
-      </table>
+      <p class="sub">Run any of these in PowerShell. Scan, dry run and health check never change your system.</p>
+      <div class="cmds">
+        <div><span>Open the app</span><code data-cmd="irm {o}/run | iex"></code></div>
+        <div><span>Scan only</span><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -Scan"></code></div>
+        <div><span>Dry run</span><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -WhatIf"></code></div>
+        <div><span>Health check</span><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -Health"></code></div>
+        <div><span>Text menu instead of the window</span><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -Console"></code></div>
+        <div><span>Undo the newest backup</span><code data-cmd="&amp; ([scriptblock]::Create((irm {o}/run))) -Undo"></code></div>
+        <div><span>Emergency restore</span><code data-cmd="irm {o}/reset | iex"></code></div>
+      </div>
     </section>
 
     <section id="trust">
       <h2>Before you run it</h2>
-      <div class="cols">
-        <div class="notice">
-          <p><b>What it does not promise.</b></p>
-          <p>DIVoptimizer does not guarantee FPS increases, lower latency, lower temperatures, or faster Windows performance. Results depend on hardware, drivers, applications, configuration, thermals and workload.</p>
+      <div class="split">
+        <div>
+          <h3>Never touched</h3>
+          <ul>
+            <li>Defender and Windows Update.</li>
+            <li>Every service except two, which are only offered under Advanced.</li>
+            <li>Store, shell and runtime apps.</li>
+          </ul>
+          <h3 style="margin-top:22px">Not automatically undoable</h3>
+          <ul>
+            <li>Deleted temporary files and the Recycle Bin.</li>
+            <li>Removed apps. The app says so before you confirm.</li>
+          </ul>
         </div>
         <div>
-          <p><b>Read it first.</b> The command downloads a script and runs it with your privileges. The full source is on <a href="https://github.com/Bulbug/DIVoptimizer">GitHub</a>; read it, or pin a reviewed version instead of the latest.</p>
-          <p>Defender and Windows Update are never part of any profile. Removing apps is not automatically reversible, and the app says so before you confirm.</p>
+          <div class="notice">
+            <p><b>What it does not promise.</b></p>
+            <p>DIVoptimizer does not guarantee FPS increases, lower latency, lower temperatures, or faster Windows performance. Results depend on hardware, drivers, applications, configuration, thermals and workload.</p>
+          </div>
+          <p style="margin-top:20px"><b>Read it first.</b> The command downloads a script and runs it with your privileges. The full source is on <a href="https://github.com/Bulbug/DIVoptimizer">GitHub</a>. Read it, or pin a reviewed version instead of the latest.</p>
         </div>
       </div>
     </section>
   </main>
 
-  <footer>DIVoptimizer v0.7.0 by Kaz. For Windows 10 and 11. Use at your own risk; test on a restore point or a virtual machine first.</footer>
+  <footer>DIVoptimizer v0.8.0 by Kaz. A conservative utility, not risk-free. For Windows 10 and 11. Test on a restore point or a virtual machine first.</footer>
 </div>
 
 <script>
 (function(){
   var origin = /^https?:/.test(location.protocol) ? location.origin : 'https://YOUR-DOMAIN';
-  document.querySelectorAll('[data-cmd]').forEach(function(el){
-    el.textContent = el.getAttribute('data-cmd').replace('{o}', origin);
-  });
+  document.querySelectorAll('[data-cmd]').forEach(function(el){ el.textContent = el.getAttribute('data-cmd').replace('{o}', origin); });
   var main = document.getElementById('main-cmd');
   main.textContent = 'irm ' + origin + '/run | iex';
   var btn = document.getElementById('copy');
@@ -135,6 +223,33 @@ footer{border-top:1px solid var(--rule);padding:28px 0 48px;color:var(--mute);fo
     if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done); }
     else { var r = document.createRange(); r.selectNodeContents(main); var s = getSelection(); s.removeAllRanges(); s.addRange(r); try { document.execCommand('copy'); done(); } catch (e) { btn.textContent = 'Select and copy'; } }
   });
+
+  // Example panel: nothing here touches a real system.
+  var boxes = [1,2,3].map(function(i){ return document.getElementById('c'+i); });
+  var apply = document.getElementById('apply'), undo = document.getElementById('undo');
+  var status = document.getElementById('status'), count = document.getElementById('count');
+  var applied = [];
+  function chosen(){ return boxes.filter(function(b){ return b.checked; }); }
+  function refresh(){ var n = chosen().length; count.textContent = n + ' selected'; apply.disabled = (n === 0 || applied.length > 0); }
+  boxes.forEach(function(b){ b.addEventListener('change', refresh); });
+  apply.addEventListener('click', function(){
+    applied = chosen();
+    if (!applied.length) return;
+    boxes.forEach(function(b){ b.disabled = true; });
+    applied.forEach(function(b){ b.closest('.item').classList.add('applied'); });
+    status.textContent = 'Backed up, applied and verified ' + applied.length + ' change' + (applied.length > 1 ? 's' : '') + '.';
+    status.className = 'status ok';
+    undo.disabled = false; apply.disabled = true;
+  });
+  undo.addEventListener('click', function(){
+    document.querySelectorAll('.item.applied').forEach(function(i){ i.classList.remove('applied'); });
+    boxes.forEach(function(b){ b.disabled = false; });
+    applied = []; undo.disabled = true;
+    status.textContent = 'Restored from backup. Everything is back as it was.';
+    status.className = 'status';
+    refresh();
+  });
+  refresh();
 })();
 </script>
 </body>

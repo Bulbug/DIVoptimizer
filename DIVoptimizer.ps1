@@ -4255,26 +4255,40 @@ $Script:GuiXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="DIVoptimizer" Height="780" Width="1040" MinHeight="560" MinWidth="820"
-        WindowStartupLocation="CenterScreen" Background="#0F1117">
+        WindowStartupLocation="CenterScreen" Background="#0B1220" FontFamily="Segoe UI Variable Text, Segoe UI">
   <Window.Resources>
     <Style TargetType="Button">
-      <Setter Property="Background" Value="#21262D"/>
-      <Setter Property="Foreground" Value="#E6EDF3"/>
-      <Setter Property="BorderBrush" Value="#30363D"/>
-      <Setter Property="Padding" Value="12,7"/>
+      <Setter Property="Background" Value="#1B2742"/>
+      <Setter Property="Foreground" Value="#E8EEF8"/>
+      <Setter Property="BorderBrush" Value="#25324D"/>
+      <Setter Property="Padding" Value="14,8"/>
       <Setter Property="Margin" Value="3"/>
       <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Opacity" Value="0.88"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="Bd" Property="Opacity" Value="0.7"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Bd" Property="Opacity" Value="0.4"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
     <Style TargetType="CheckBox">
-      <Setter Property="Foreground" Value="#E6EDF3"/>
+      <Setter Property="Foreground" Value="#E8EEF8"/>
       <Setter Property="Margin" Value="2,6,2,2"/>
       <Setter Property="FontSize" Value="13"/>
     </Style>
     <Style TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#E6EDF3"/>
+      <Setter Property="Foreground" Value="#E8EEF8"/>
     </Style>
     <Style TargetType="Expander">
-      <Setter Property="Foreground" Value="#8B949E"/>
+      <Setter Property="Foreground" Value="#8DA0BF"/>
     </Style>
   </Window.Resources>
   <Grid>
@@ -4283,19 +4297,19 @@ $Script:GuiXaml = @'
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
-    <Border Grid.Row="0" Background="#161B22" BorderBrush="#30363D" BorderThickness="0,0,0,1" Padding="18,12">
+    <Border Grid.Row="0" Background="#131D33" BorderBrush="#25324D" BorderThickness="0,0,0,1" Padding="18,12">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-          <TextBlock Text="DIV" FontSize="22" FontWeight="Bold" Foreground="#58C4DC"/>
+          <TextBlock Text="DIV" FontSize="22" FontWeight="Bold" Foreground="#7C8CFF"/>
           <TextBlock Text="optimizer" FontSize="22" FontWeight="Bold" Foreground="White"/>
-          <TextBlock x:Name="VersionText" FontSize="12" Foreground="#8B949E" VerticalAlignment="Bottom" Margin="10,0,0,3"/>
+          <TextBlock x:Name="VersionText" FontSize="12" Foreground="#8DA0BF" VerticalAlignment="Bottom" Margin="10,0,0,3"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <TextBlock x:Name="SysLine" Foreground="#8B949E" FontSize="12" VerticalAlignment="Center" Margin="0,0,12,0"/>
+          <TextBlock x:Name="SysLine" Foreground="#8DA0BF" FontSize="12" VerticalAlignment="Center" Margin="0,0,12,0"/>
           <Button x:Name="HomeBtn" Content="HOME"/>
         </StackPanel>
       </Grid>
@@ -4303,16 +4317,16 @@ $Script:GuiXaml = @'
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
       <StackPanel x:Name="Content" Margin="24,16,24,16"/>
     </ScrollViewer>
-    <Border Grid.Row="2" Background="#161B22" BorderBrush="#30363D" BorderThickness="0,1,0,0" Padding="16,8">
-      <TextBlock x:Name="StatusText" Text="Ready." Foreground="#8B949E" TextWrapping="Wrap"/>
+    <Border Grid.Row="2" Background="#131D33" BorderBrush="#25324D" BorderThickness="0,1,0,0" Padding="16,8">
+      <TextBlock x:Name="StatusText" Text="Ready." Foreground="#8DA0BF" TextWrapping="Wrap"/>
     </Border>
-    <Grid x:Name="BusyOverlay" Grid.RowSpan="3" Background="#D90E151C" Visibility="Collapsed" Panel.ZIndex="10">
-      <Border Background="#161B22" BorderBrush="#30363D" BorderThickness="1" CornerRadius="6" Padding="30,24" HorizontalAlignment="Center" VerticalAlignment="Center" MinWidth="440" MaxWidth="640">
+    <Grid x:Name="BusyOverlay" Grid.RowSpan="3" Background="#D90B1220" Visibility="Collapsed" Panel.ZIndex="10">
+      <Border Background="#131D33" BorderBrush="#25324D" BorderThickness="1" CornerRadius="14" Padding="32,26" HorizontalAlignment="Center" VerticalAlignment="Center" MinWidth="440" MaxWidth="640">
         <StackPanel>
           <TextBlock x:Name="BusyTitle" Text="Working..." FontSize="18" FontWeight="Bold" Foreground="White"/>
-          <TextBlock x:Name="BusyDetail" Text="" Foreground="#8B949E" Margin="0,6,0,16" TextWrapping="Wrap"/>
-          <ProgressBar x:Name="BusyBar" Height="8" Minimum="0" Maximum="100" IsIndeterminate="True" Foreground="#58C4DC" Background="#30363D" BorderThickness="0"/>
-          <TextBlock Text="Please wait. Nothing else can be clicked until this finishes." FontSize="11" Foreground="#6E7681" Margin="0,12,0,0"/>
+          <TextBlock x:Name="BusyDetail" Text="" Foreground="#8DA0BF" Margin="0,6,0,16" TextWrapping="Wrap"/>
+          <ProgressBar x:Name="BusyBar" Height="8" Minimum="0" Maximum="100" IsIndeterminate="True" Foreground="#7C8CFF" Background="#25324D" BorderThickness="0"/>
+          <TextBlock Text="Please wait. Nothing else can be clicked until this finishes." FontSize="11" Foreground="#6F82A3" Margin="0,12,0,0"/>
         </StackPanel>
       </Border>
     </Grid>
@@ -4370,7 +4384,7 @@ function Invoke-GuiWithBusy {
 }
 
 function New-GuiText {
-    param([string]$Text, [int]$Size = 13, [string]$Color = '#E6EDF3', [switch]$Bold, [string]$Margin = '0,2,0,2')
+    param([string]$Text, [int]$Size = 13, [string]$Color = '#E8EEF8', [switch]$Bold, [string]$Margin = '0,2,0,2')
     $t = New-Object System.Windows.Controls.TextBlock
     $t.Text = $Text
     $t.FontSize = $Size
@@ -4402,7 +4416,7 @@ function Reset-GuiPage {
     $Script:GuiContent.Children.Clear()
     $Script:GuiChecks.Clear()
     Add-GuiChild $Script:GuiContent (New-GuiText -Text $Title -Size 22 -Bold -Margin '0,0,0,2')
-    if ($Subtitle) { Add-GuiChild $Script:GuiContent (New-GuiText -Text $Subtitle -Size 12 -Color '#8B949E' -Margin '0,0,0,12') }
+    if ($Subtitle) { Add-GuiChild $Script:GuiContent (New-GuiText -Text $Subtitle -Size 12 -Color '#8DA0BF' -Margin '0,0,0,12') }
 }
 
 function Show-GuiMessage {
@@ -4420,10 +4434,10 @@ function Show-GuiTextDialog {
     param([string]$Title, [string]$Text)
     $w = New-Object System.Windows.Window
     $w.Title = $Title; $w.Width = 820; $w.Height = 600; $w.Owner = $Script:GuiWindow
-    $w.WindowStartupLocation = 'CenterOwner'; $w.Background = (Get-GuiBrush '#0F1117')
+    $w.WindowStartupLocation = 'CenterOwner'; $w.Background = (Get-GuiBrush '#0B1220')
     $tb = New-Object System.Windows.Controls.TextBox
     $tb.Text = $Text; $tb.IsReadOnly = $true; $tb.FontFamily = 'Consolas'; $tb.FontSize = 12
-    $tb.Background = (Get-GuiBrush '#161B22'); $tb.Foreground = (Get-GuiBrush '#E6EDF3')
+    $tb.Background = (Get-GuiBrush '#131D33'); $tb.Foreground = (Get-GuiBrush '#E8EEF8')
     $tb.VerticalScrollBarVisibility = 'Auto'; $tb.HorizontalScrollBarVisibility = 'Auto'; $tb.Margin = '10'
     $w.Content = $tb
     [void]$w.ShowDialog()
@@ -4434,7 +4448,7 @@ function Show-GuiReviewDialog {
     param([object[]]$Recs, $Ready)
     $w = New-Object System.Windows.Window
     $w.Title = 'Review changes'; $w.Width = 760; $w.Height = 680; $w.Owner = $Script:GuiWindow
-    $w.WindowStartupLocation = 'CenterOwner'; $w.Background = (Get-GuiBrush '#0F1117')
+    $w.WindowStartupLocation = 'CenterOwner'; $w.Background = (Get-GuiBrush '#0B1220')
     $root = New-Object System.Windows.Controls.Grid
     $r1 = New-Object System.Windows.Controls.RowDefinition; $r1.Height = '*'
     $r2 = New-Object System.Windows.Controls.RowDefinition; $r2.Height = 'Auto'
@@ -4445,22 +4459,22 @@ function Show-GuiReviewDialog {
     $sp.Margin = '18'
     $sv.Content = $sp
     Add-GuiChild $sp (New-GuiText -Text 'REVIEW CHANGES' -Size 20 -Bold)
-    Add-GuiChild $sp (New-GuiText -Text ("{0} change(s) selected" -f @($Recs).Count) -Color '#8B949E' -Margin '0,0,0,10')
+    Add-GuiChild $sp (New-GuiText -Text ("{0} change(s) selected" -f @($Recs).Count) -Color '#8DA0BF' -Margin '0,0,0,10')
     $arrow = [string][char]0x2192
     foreach ($risk in @('LOW RISK', 'OPTIONAL', 'ADVANCED')) {
         $color = switch ($risk) { 'LOW RISK' { '#3FB950' } 'OPTIONAL' { '#D29922' } default { '#F85149' } }
         foreach ($r in @($Recs | Where-Object { $_.Risk -eq $risk })) {
             Add-GuiChild $sp (New-GuiText -Text $risk -Size 11 -Bold -Color $color -Margin '0,10,0,0')
             Add-GuiChild $sp (New-GuiText -Text $r.Name -Bold)
-            Add-GuiChild $sp (New-GuiText -Text ("{0}  {1}  {2}" -f $r.Current, $arrow, $r.New) -Color '#8B949E')
+            Add-GuiChild $sp (New-GuiText -Text ("{0}  {1}  {2}" -f $r.Current, $arrow, $r.New) -Color '#8DA0BF')
             if ($r.Restart -ne 'No') { Add-GuiChild $sp (New-GuiText -Text ('Restart required: ' + $r.Restart) -Size 12 -Color '#D29922') }
             if ($r.Rollback -eq 'None') { Add-GuiChild $sp (New-GuiText -Text ('Not reversible automatically. ' + $r.RollbackNote) -Size 12 -Color '#D29922') }
         }
     }
-    Add-GuiChild $sp (New-GuiText -Text 'SAFETY CHECKS' -Size 11 -Bold -Color '#58C4DC' -Margin '0,16,0,2')
+    Add-GuiChild $sp (New-GuiText -Text 'SAFETY CHECKS' -Size 11 -Bold -Color '#7C8CFF' -Margin '0,16,0,2')
     Add-GuiChild $sp (New-GuiText -Text ('Backup: ' + $(if ($Ready.BackupReady) { 'READY' } else { 'NOT READY - ' + $Ready.BackupProblem })))
     Add-GuiChild $sp (New-GuiText -Text ('System Restore: ' + $Ready.RestorePointText))
-    foreach ($c in @($Ready.Coverage | Where-Object { $_.Needed })) { Add-GuiChild $sp (New-GuiText -Text ("{0} will be backed up" -f $c.Name) -Size 12 -Color '#8B949E') }
+    foreach ($c in @($Ready.Coverage | Where-Object { $_.Needed })) { Add-GuiChild $sp (New-GuiText -Text ("{0} will be backed up" -f $c.Name) -Size 12 -Color '#8DA0BF') }
     foreach ($n in @($Ready.NotReversible)) { Add-GuiChild $sp (New-GuiText -Text ('Not reversible automatically: ' + $n) -Size 12 -Color '#D29922') }
     foreach ($t in @($Recs)) {
         if ($t.Kind -eq 'PowerPlan' -and $t.Tweak.PlanKey -ne 'Balanced' -and $Script:LastScan.Hardware.DeviceType -eq 'Laptop') {
@@ -4494,7 +4508,7 @@ function Show-GuiResult {
     Reset-GuiPage -Title $(if ($Res.Aborted) { 'CANCELLED' } elseif ($Res.Failed -gt 0) { 'COMPLETED WITH WARNINGS' } else { 'OPTIMIZATION COMPLETE' })
     if ($Res.Aborted) {
         Add-GuiChild $Script:GuiContent (New-GuiText -Text $Res.AbortReason -Color '#D29922')
-        Add-GuiChild $Script:GuiContent (New-GuiText -Text 'No settings were changed.' -Color '#8B949E')
+        Add-GuiChild $Script:GuiContent (New-GuiText -Text 'No settings were changed.' -Color '#8DA0BF')
         return
     }
     Add-GuiChild $Script:GuiContent (New-GuiText -Text ("Successful: {0}     Failed: {1}     Skipped: {2}" -f $Res.Success, $Res.Failed, $Res.Skipped) -Size 15)
@@ -4573,7 +4587,7 @@ function Show-GuiTweakPage {
     param([string]$Title, [string]$Subtitle, [object[]]$Recs, [string]$Description, [string]$ProfileName = '', [string[]]$PreselectIds = @())
     Reset-GuiPage -Title $Title -Subtitle $Subtitle
     $Recs = @($Recs)
-    if ($Recs.Count -eq 0) { Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Nothing to show here for this PC.' -Color '#8B949E'); return }
+    if ($Recs.Count -eq 0) { Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Nothing to show here for this PC.' -Color '#8DA0BF'); return }
     $arrow = [string][char]0x2192
     foreach ($risk in @('LOW RISK', 'OPTIONAL', 'ADVANCED')) {
         $group = @($Recs | Where-Object { $_.Risk -eq $risk })
@@ -4589,15 +4603,15 @@ function Show-GuiTweakPage {
             $Script:GuiChecks.Add($cb)
             Add-GuiChild $Script:GuiContent $cb
             $sub = if (-not $r.Compatible) { $r.CompatMessage } elseif ($r.Blocked) { 'Not offered: ' + $r.Blocked } elseif ($r.Applied) { 'Already set.' } else { ("{0}  {1}  {2}" -f $r.Current, $arrow, $r.New) }
-            Add-GuiChild $Script:GuiContent (New-GuiText -Text $sub -Size 12 -Color '#8B949E' -Margin '22,0,0,0')
+            Add-GuiChild $Script:GuiContent (New-GuiText -Text $sub -Size 12 -Color '#8DA0BF' -Margin '22,0,0,0')
             $exp = New-Object System.Windows.Controls.Expander
             $exp.Header = 'Details'; $exp.Margin = '20,0,0,0'
             $dp = New-Object System.Windows.Controls.StackPanel
-            Add-GuiChild $dp (New-GuiText -Text ('Why: ' + $r.Why) -Size 12 -Color '#C9D1D9')
-            Add-GuiChild $dp (New-GuiText -Text ('Potential downside: ' + $r.Downside) -Size 12 -Color '#C9D1D9')
-            Add-GuiChild $dp (New-GuiText -Text ('Restart required: ' + $r.Restart) -Size 12 -Color '#C9D1D9')
+            Add-GuiChild $dp (New-GuiText -Text ('Why: ' + $r.Why) -Size 12 -Color '#C8D3E8')
+            Add-GuiChild $dp (New-GuiText -Text ('Potential downside: ' + $r.Downside) -Size 12 -Color '#C8D3E8')
+            Add-GuiChild $dp (New-GuiText -Text ('Restart required: ' + $r.Restart) -Size 12 -Color '#C8D3E8')
             $rb = if ($r.Rollback -eq 'None') { 'NOT reversible automatically. ' + $r.RollbackNote } else { 'Available' }
-            Add-GuiChild $dp (New-GuiText -Text ('Rollback: ' + $rb) -Size 12 -Color '#C9D1D9')
+            Add-GuiChild $dp (New-GuiText -Text ('Rollback: ' + $rb) -Size 12 -Color '#C8D3E8')
             $exp.Content = $dp
             Add-GuiChild $Script:GuiContent $exp
         }
@@ -4612,7 +4626,7 @@ function Show-GuiTweakPage {
         Invoke-GuiApply -Recs $chosen -Description $Script:GuiApplyArgs.Description -ProfileName $Script:GuiApplyArgs.ProfileName
     })
     Add-GuiChild $Script:GuiContent $bar
-    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'ADVANCED items are never selected automatically.' -Size 11 -Color '#8B949E' -Margin '0,6,0,0')
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'ADVANCED items are never selected automatically.' -Size 11 -Color '#8DA0BF' -Margin '0,6,0,0')
 }
 
 # ---- pages ----
@@ -4625,7 +4639,7 @@ function Show-GuiScan {
     $tb = New-Object System.Windows.Controls.TextBox
     $tb.Text = ((Get-ScanReportLines -Scan $scan) -join "`r`n")
     $tb.IsReadOnly = $true; $tb.FontFamily = 'Consolas'; $tb.FontSize = 12; $tb.Height = 520
-    $tb.Background = (Get-GuiBrush '#161B22'); $tb.Foreground = (Get-GuiBrush '#E6EDF3')
+    $tb.Background = (Get-GuiBrush '#131D33'); $tb.Foreground = (Get-GuiBrush '#E8EEF8')
     $tb.VerticalScrollBarVisibility = 'Auto'; $tb.HorizontalScrollBarVisibility = 'Auto'
     Add-GuiChild $Script:GuiContent $tb
     Set-GuiStatus 'Scan complete.'
@@ -4693,9 +4707,9 @@ function Show-GuiStartup {
         [void]$row.ColumnDefinitions.Add($c1); [void]$row.ColumnDefinitions.Add($c2)
         $sp = New-Object System.Windows.Controls.StackPanel
         $imp = if ($null -ne $it.RunningMB) { "running now, about $($it.RunningMB) MB RAM" } else { 'impact not measured' }
-        Add-GuiChild $sp (New-GuiText -Text ("{0}   [{1}]" -f $it.Name, $(if ($it.Enabled) { 'Enabled' } else { 'Disabled' })) -Bold -Color $(if ($it.Enabled) { '#3FB950' } else { '#8B949E' }))
-        Add-GuiChild $sp (New-GuiText -Text ("{0}   |   {1}" -f $it.Source, $imp) -Size 11 -Color '#8B949E')
-        Add-GuiChild $sp (New-GuiText -Text $it.Command -Size 11 -Color '#6E7681')
+        Add-GuiChild $sp (New-GuiText -Text ("{0}   [{1}]" -f $it.Name, $(if ($it.Enabled) { 'Enabled' } else { 'Disabled' })) -Bold -Color $(if ($it.Enabled) { '#3FB950' } else { '#8DA0BF' }))
+        Add-GuiChild $sp (New-GuiText -Text ("{0}   |   {1}" -f $it.Source, $imp) -Size 11 -Color '#8DA0BF')
+        Add-GuiChild $sp (New-GuiText -Text $it.Command -Size 11 -Color '#6F82A3')
         [void]$row.Children.Add($sp)
         $btns = New-Object System.Windows.Controls.StackPanel
         $btns.Orientation = 'Horizontal'
@@ -4740,14 +4754,14 @@ function Show-GuiCleanup {
 function Show-GuiNetwork {
     Reset-GuiPage -Title 'Network tools' -Subtitle 'Diagnostics, repair and reset tools. These are not optimizations. Reset operations can temporarily interrupt connectivity.'
     $p = $Script:GuiContent
-    Add-GuiChild $p (New-GuiText -Text 'DIAGNOSTICS (read-only)' -Size 12 -Bold -Color '#58C4DC' -Margin '0,10,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'DIAGNOSTICS (read-only)' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,10,0,0')
     $d = New-Object System.Windows.Controls.WrapPanel
     Add-GuiChild $d (New-GuiButton -Text 'IP configuration' -OnClick { Show-GuiTextDialog -Title 'IP configuration' -Text ((Get-NetIPConfiguration | Format-List | Out-String)) })
     Add-GuiChild $d (New-GuiButton -Text 'DNS servers' -OnClick { Show-GuiTextDialog -Title 'DNS servers' -Text ((Get-DnsClientServerAddress | Format-Table -AutoSize | Out-String)) })
     Add-GuiChild $d (New-GuiButton -Text 'Adapters' -OnClick { Show-GuiTextDialog -Title 'Network adapters' -Text ((Get-NetAdapter | Format-Table -AutoSize | Out-String)) })
     Add-GuiChild $d (New-GuiButton -Text 'Ping 1.1.1.1' -OnClick { Set-GuiStatus 'Pinging...'; Show-GuiTextDialog -Title 'Ping' -Text (Invoke-GuiWithBusy -Title 'Pinging 1.1.1.1' -Detail 'Sending 4 test packets...' -Action { Test-Connection -ComputerName 1.1.1.1 -Count 4 | Format-Table -AutoSize | Out-String }); Set-GuiStatus 'Ready.' })
     Add-GuiChild $p $d
-    Add-GuiChild $p (New-GuiText -Text 'REPAIR' -Size 12 -Bold -Color '#58C4DC' -Margin '0,14,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'REPAIR' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,14,0,0')
     Add-GuiChild $p (New-GuiButton -Text 'Flush DNS cache' -Width 180 -OnClick { try { [void](Invoke-NetworkTool -Tool FlushDns); Show-GuiMessage 'DNS cache flushed.' } catch { Show-GuiMessage $_.Exception.Message 'Failed' 'Error' } })
     Add-GuiChild $p (New-GuiText -Text 'RESET (can interrupt connectivity; restart required; not reversible automatically)' -Size 12 -Bold -Color '#F85149' -Margin '0,14,0,0')
     $r = New-Object System.Windows.Controls.WrapPanel
@@ -4770,7 +4784,7 @@ function Show-GuiMaintenance {
         $row = New-Object System.Windows.Controls.StackPanel
         $row.Margin = '0,6,0,6'
         Add-GuiChild $row (New-GuiText -Text ("{0}   [{1}]" -f $c.Name, $c.Category) -Bold)
-        Add-GuiChild $row (New-GuiText -Text $c.Note -Size 12 -Color '#8B949E')
+        Add-GuiChild $row (New-GuiText -Text $c.Note -Size 12 -Color '#8DA0BF')
         Add-GuiChild $row (New-GuiButton -Text 'RUN' -Width 90 -Tag $c -OnClick {
             param($s, $e)
             $cmd = $s.Tag
@@ -4794,7 +4808,7 @@ function Show-GuiBackups {
     $list = @(Get-BackupList)
     $lb = New-Object System.Windows.Controls.ListBox
     $lb.Height = 300
-    $lb.Background = (Get-GuiBrush '#161B22'); $lb.Foreground = (Get-GuiBrush '#E6EDF3')
+    $lb.Background = (Get-GuiBrush '#131D33'); $lb.Foreground = (Get-GuiBrush '#E8EEF8')
     foreach ($b in $list) {
         $fmt = if ($b.Format -eq 'v2') { 'v0.7' } elseif ($b.Format -eq 'legacy') { 'legacy v0.6' } else { $b.Format }
         $item = New-Object System.Windows.Controls.ListBoxItem
@@ -4859,12 +4873,12 @@ function Show-GuiBackups {
 function Show-GuiHistory {
     Reset-GuiPage -Title 'History' -Subtitle 'Every applied change set, newest first.'
     $h = @(Get-ChangeHistory)
-    if ($h.Count -eq 0) { Add-GuiChild $Script:GuiContent (New-GuiText -Text 'No changes have been applied yet.' -Color '#8B949E'); return }
+    if ($h.Count -eq 0) { Add-GuiChild $Script:GuiContent (New-GuiText -Text 'No changes have been applied yet.' -Color '#8DA0BF'); return }
     foreach ($b in $h) {
         $row = New-Object System.Windows.Controls.StackPanel
         $row.Margin = '0,8,0,8'
         Add-GuiChild $row (New-GuiText -Text $b.Created -Bold)
-        Add-GuiChild $row (New-GuiText -Text ("{0}    {1} change(s)    Backup: {2}" -f $(if ($b.Description) { $b.Description } else { 'Changes' }), $b.ChangeCount, $b.Id) -Size 12 -Color '#8B949E')
+        Add-GuiChild $row (New-GuiText -Text ("{0}    {1} change(s)    Backup: {2}" -f $(if ($b.Description) { $b.Description } else { 'Changes' }), $b.ChangeCount, $b.Id) -Size 12 -Color '#8DA0BF')
         $bar = New-Object System.Windows.Controls.StackPanel
         $bar.Orientation = 'Horizontal'
         Add-GuiChild $bar (New-GuiButton -Text 'VIEW' -Width 80 -Tag $b -OnClick {
@@ -4916,7 +4930,7 @@ function Show-GuiAdvanced {
     Add-GuiChild $w (New-GuiButton -Text 'Optional apps' -OnClick { Show-GuiOptionalApps })
     Add-GuiChild $w (New-GuiButton -Text 'Network tools' -OnClick { Show-GuiNetwork })
     Add-GuiChild $p $w
-    Add-GuiChild $p (New-GuiText -Text 'POWER PLAN' -Size 12 -Bold -Color '#58C4DC' -Margin '0,16,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'POWER PLAN' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,16,0,0')
     Add-GuiChild $p (New-GuiText -Text 'High-performance plans may increase power consumption, heat and fan noise, and may reduce battery life on laptops. They do not automatically improve FPS.' -Size 12 -Color '#D29922')
     $pw = New-Object System.Windows.Controls.WrapPanel
     foreach ($k in @('Balanced', 'Performance', 'Maximum')) {
@@ -4927,7 +4941,7 @@ function Show-GuiAdvanced {
         })
     }
     Add-GuiChild $p $pw
-    Add-GuiChild $p (New-GuiText -Text 'BENCHMARK (measured values only)' -Size 12 -Bold -Color '#58C4DC' -Margin '0,16,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'BENCHMARK (measured values only)' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,16,0,0')
     $bw = New-Object System.Windows.Controls.WrapPanel
     Add-GuiChild $bw (New-GuiButton -Text 'Capture snapshot' -OnClick {
         Add-Type -AssemblyName Microsoft.VisualBasic
@@ -4951,8 +4965,8 @@ function Show-GuiResources {
     Add-GuiChild $Script:GuiContent (New-GuiText -Text ("CPU {0}%     RAM {1}% ({2} of {3} GB)     Disk {4} GB free, busy {5}     Network down {6} KB/s, up {7} KB/s" -f $snap.CpuPct, $snap.RamPct, $snap.RamUsedGB, $snap.RamTotalGB, $snap.DiskFreeGB, $(if ($null -ne $snap.DiskBusyPct) { "$($snap.DiskBusyPct)%" } else { 'n/a' }), $snap.NetRxKBs, $snap.NetTxKBs) -Size 14)
     $grid = New-Object System.Windows.Controls.DataGrid
     $grid.Height = 440; $grid.IsReadOnly = $true; $grid.AutoGenerateColumns = $true; $grid.CanUserSortColumns = $true
-    $grid.Background = (Get-GuiBrush '#161B22'); $grid.Foreground = (Get-GuiBrush '#E6EDF3'); $grid.RowBackground = (Get-GuiBrush '#161B22')
-    $grid.AlternatingRowBackground = (Get-GuiBrush '#1C2128'); $grid.GridLinesVisibility = 'None'
+    $grid.Background = (Get-GuiBrush '#131D33'); $grid.Foreground = (Get-GuiBrush '#E8EEF8'); $grid.RowBackground = (Get-GuiBrush '#131D33')
+    $grid.AlternatingRowBackground = (Get-GuiBrush '#172138'); $grid.GridLinesVisibility = 'None'
     $grid.ItemsSource = [object[]]@($snap.Processes | Sort-Object RamMB -Descending)
     Add-GuiChild $Script:GuiContent $grid
     Add-GuiChild $Script:GuiContent (New-GuiButton -Text 'REFRESH' -Width 110 -OnClick { Show-GuiResources })
@@ -4962,8 +4976,8 @@ function Show-GuiResources {
 function Show-GuiReportAbout {
     Reset-GuiPage -Title 'Reports, updates and about'
     $p = $Script:GuiContent
-    Add-GuiChild $p (New-GuiText -Text 'EXPORT SYSTEM REPORT' -Size 12 -Bold -Color '#58C4DC' -Margin '0,6,0,0')
-    Add-GuiChild $p (New-GuiText -Text 'Contains no user name, computer name, serial numbers, file paths or startup command lines.' -Size 12 -Color '#8B949E')
+    Add-GuiChild $p (New-GuiText -Text 'EXPORT SYSTEM REPORT' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,6,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'Contains no user name, computer name, serial numbers, file paths or startup command lines.' -Size 12 -Color '#8DA0BF')
     $bar = New-Object System.Windows.Controls.WrapPanel
     foreach ($f in @('txt', 'json')) {
         Add-GuiChild $bar (New-GuiButton -Text ('Export ' + $f.ToUpper()) -Tag $f -OnClick {
@@ -4978,8 +4992,8 @@ function Show-GuiReportAbout {
         })
     }
     Add-GuiChild $p $bar
-    Add-GuiChild $p (New-GuiText -Text 'UPDATES' -Size 12 -Bold -Color '#58C4DC' -Margin '0,18,0,0')
-    Add-GuiChild $p (New-GuiText -Text 'Nothing is downloaded or run unless you ask, and nothing is installed automatically.' -Size 12 -Color '#8B949E')
+    Add-GuiChild $p (New-GuiText -Text 'UPDATES' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,18,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'Nothing is downloaded or run unless you ask, and nothing is installed automatically.' -Size 12 -Color '#8DA0BF')
     Add-GuiChild $p (New-GuiButton -Text 'Check for updates' -Width 160 -OnClick {
         try {
             $u = Invoke-GuiWithBusy -Title 'Checking for updates' -Detail 'Contacting the update source over HTTPS...' -Action { Get-UpdateInfo }
@@ -4993,11 +5007,11 @@ function Show-GuiReportAbout {
         } catch { Show-GuiMessage ('Could not check for updates: ' + $_.Exception.Message) 'Update check' 'Warning' }
         Set-GuiStatus 'Ready.'
     })
-    Add-GuiChild $p (New-GuiText -Text 'ABOUT' -Size 12 -Bold -Color '#58C4DC' -Margin '0,18,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'ABOUT' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,18,0,0')
     Add-GuiChild $p (New-GuiText -Text "$($Script:AppName) v$($Script:Version)  by $($Script:Author)")
-    Add-GuiChild $p (New-GuiText -Text ('Backups: ' + $Script:BackupsDir) -Size 12 -Color '#8B949E')
-    Add-GuiChild $p (New-GuiText -Text ('Logs: ' + $Script:LogsDir) -Size 12 -Color '#8B949E')
-    Add-GuiChild $p (New-GuiText -Text 'DIVoptimizer does not guarantee FPS increases, lower latency, lower temperatures, or faster Windows performance. Windows performance depends on hardware, drivers, applications, configuration, thermals, and workload. DIVoptimizer therefore focuses on transparent configuration changes, maintenance, cleanup, and user-controlled optimization rather than guaranteed performance claims.' -Size 12 -Color '#8B949E' -Margin '0,10,0,0')
+    Add-GuiChild $p (New-GuiText -Text ('Backups: ' + $Script:BackupsDir) -Size 12 -Color '#8DA0BF')
+    Add-GuiChild $p (New-GuiText -Text ('Logs: ' + $Script:LogsDir) -Size 12 -Color '#8DA0BF')
+    Add-GuiChild $p (New-GuiText -Text 'DIVoptimizer does not guarantee FPS increases, lower latency, lower temperatures, or faster Windows performance. Windows performance depends on hardware, drivers, applications, configuration, thermals, and workload. DIVoptimizer therefore focuses on transparent configuration changes, maintenance, cleanup, and user-controlled optimization rather than guaranteed performance claims.' -Size 12 -Color '#8DA0BF' -Margin '0,10,0,0')
 }
 
 function Update-GuiSysLine {
@@ -5021,17 +5035,17 @@ function Show-GuiDashboard {
         $g = New-Object System.Windows.Controls.WrapPanel
         foreach ($k in @('CPU', 'RAM', 'Storage', 'Startup Apps', 'Windows Update', 'Game Mode', 'Game DVR', 'HAGS')) {
             $card = New-Object System.Windows.Controls.Border
-            $card.Background = (Get-GuiBrush '#161B22'); $card.BorderBrush = (Get-GuiBrush '#30363D'); $card.BorderThickness = '1'
+            $card.Background = (Get-GuiBrush '#131D33'); $card.BorderBrush = (Get-GuiBrush '#25324D'); $card.BorderThickness = '1'
             $card.Padding = '12,8'; $card.Margin = '0,0,10,10'; $card.MinWidth = 150
             $sp = New-Object System.Windows.Controls.StackPanel
-            Add-GuiChild $sp (New-GuiText -Text $k.ToUpper() -Size 10 -Color '#8B949E')
+            Add-GuiChild $sp (New-GuiText -Text $k.ToUpper() -Size 10 -Color '#8DA0BF')
             Add-GuiChild $sp (New-GuiText -Text ([string]$m[$k]) -Size 14 -Bold)
             $card.Child = $sp
             Add-GuiChild $g $card
         }
         Add-GuiChild $p $g
-        Add-GuiChild $p (New-GuiText -Text 'These are measurements, not a score.' -Size 11 -Color '#6E7681')
-        if (@($s.Games).Count -gt 0) { Add-GuiChild $p (New-GuiText -Text ('Detected games/launchers: ' + ((@($s.Games | ForEach-Object { $_.Name })) -join ', ')) -Size 12 -Color '#8B949E' -Margin '0,6,0,0') }
+        Add-GuiChild $p (New-GuiText -Text 'These are measurements, not a score.' -Size 11 -Color '#6F82A3')
+        if (@($s.Games).Count -gt 0) { Add-GuiChild $p (New-GuiText -Text ('Detected games/launchers: ' + ((@($s.Games | ForEach-Object { $_.Name })) -join ', ')) -Size 12 -Color '#8DA0BF' -Margin '0,6,0,0') }
     }
     $top = New-Object System.Windows.Controls.WrapPanel
     $top.Margin = '0,14,0,0'
@@ -5039,20 +5053,20 @@ function Show-GuiDashboard {
     Add-GuiChild $top (New-GuiNavButton 'RECOMMENDATIONS' { Show-GuiRecommendations } '#238636')
     Add-GuiChild $top (New-GuiNavButton 'QUICK OPTIMIZE' { Invoke-GuiQuickOptimize })
     Add-GuiChild $p $top
-    Add-GuiChild $p (New-GuiText -Text 'PROFILES' -Size 12 -Bold -Color '#58C4DC' -Margin '0,14,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'PROFILES' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,14,0,0')
     $pr = New-Object System.Windows.Controls.WrapPanel
     foreach ($k in @($Script:Profiles.Keys)) {
         Add-GuiChild $pr (New-GuiButton -Text ($k + ' Profile') -Tag $k -Width 200 -OnClick { param($sd, $e) Show-GuiRecommendations -ProfileName ([string]$sd.Tag) })
     }
     Add-GuiChild $p $pr
-    Add-GuiChild $p (New-GuiText -Text 'OPTIMIZE' -Size 12 -Bold -Color '#58C4DC' -Margin '0,14,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'OPTIMIZE' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,14,0,0')
     $o = New-Object System.Windows.Controls.WrapPanel
     Add-GuiChild $o (New-GuiNavButton 'PERFORMANCE' { Show-GuiCategory -Title 'Performance' -Categories @('Performance') })
     Add-GuiChild $o (New-GuiNavButton 'GAMING' { Show-GuiCategory -Title 'Gaming' -Categories @('Gaming') })
     Add-GuiChild $o (New-GuiNavButton 'PRIVACY' { Show-GuiCategory -Title 'Privacy' -Categories @('Privacy') })
     Add-GuiChild $o (New-GuiNavButton 'DEBLOAT (OPTIONAL APPS)' { Show-GuiOptionalApps })
     Add-GuiChild $p $o
-    Add-GuiChild $p (New-GuiText -Text 'MAINTAIN' -Size 12 -Bold -Color '#58C4DC' -Margin '0,14,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'MAINTAIN' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,14,0,0')
     $mt = New-Object System.Windows.Controls.WrapPanel
     Add-GuiChild $mt (New-GuiNavButton 'STARTUP' { Show-GuiStartup })
     Add-GuiChild $mt (New-GuiNavButton 'CLEANUP' { Show-GuiCleanup })
@@ -5060,7 +5074,7 @@ function Show-GuiDashboard {
     Add-GuiChild $mt (New-GuiNavButton 'MAINTENANCE' { Show-GuiMaintenance })
     Add-GuiChild $mt (New-GuiNavButton 'RESOURCES' { Show-GuiResources })
     Add-GuiChild $p $mt
-    Add-GuiChild $p (New-GuiText -Text 'RECOVER AND MORE' -Size 12 -Bold -Color '#58C4DC' -Margin '0,14,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'RECOVER AND MORE' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,14,0,0')
     $rc = New-Object System.Windows.Controls.WrapPanel
     Add-GuiChild $rc (New-GuiNavButton 'BACKUP / RESTORE' { Show-GuiBackups })
     Add-GuiChild $rc (New-GuiNavButton 'HISTORY' { Show-GuiHistory })

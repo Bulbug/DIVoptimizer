@@ -11,6 +11,8 @@
 - New `-Health`: read-only self-check (PowerShell version, Administrator, backup folder, backup verification, allow-list).
 - New `-Undo`: finds the newest backup that passes verification, shows it, asks, then restores it. Needs Administrator (UAC relaunch keeps the mode).
 - Every session now also writes a plain-text `.log` next to the JSON log.
+- App window restyled: new navy and blue-violet palette, rounded buttons with hover and pressed states, rounder busy card, Segoe UI Variable font. Styling only; layout and behavior unchanged. Not yet seen on a real Windows desktop.
+- Website redesigned with an interactive preview/apply/undo example.
 - Added docs/TWEAK-INVENTORY.md, docs/TEST-MATRIX.md and AUDIT-v0.8.0.md.
 - Nothing in this version has been run on Windows.
 

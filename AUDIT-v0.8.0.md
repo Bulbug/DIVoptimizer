@@ -44,7 +44,9 @@ See above. The laptop check uses chassis type; a mis-reported chassis would defe
 DIVoptimizer.ps1, DIVoptimizer-Reset.ps1 (version only), tests/DIVoptimizer.Tests.ps1, README.md, CHANGELOG.md, docs/TWEAK-INVENTORY.md, docs/TEST-MATRIX.md, website/index.html.
 
 ## Tests performed
-Static only: delimiter balance (parentheses were off by two before and after, from text in strings), ASCII-only source, shared restore core byte-identical in both scripts.
+- Real PowerShell parser (PowerShell 7.4.6 on Linux): DIVoptimizer.ps1, DIVoptimizer-Reset.ps1 and the test file all parse with 0 errors.
+- Dot-source smoke test on Linux: all 233 functions load; Test-ServiceProtected, Get-TweakTier, Get-RelaunchModeArgs, the backup-ID format and ID sanitizer return the expected values; the service catalog contains only SysMain and DiagTrack; Get-TweakCatalog builds 20 tweaks.
+- Static: ASCII-only source; shared restore core byte-identical in both scripts (re-verified after the text-log change; the zips sent between the text-log change and this one had a mismatch that is now fixed).
 
 ## Test results
-No dynamic test results exist. See docs/TEST-MATRIX.md; every row is "not run".
+Everything above passed. **Not tested at all:** Pester (the PowerShell Gallery is not reachable from here), anything that reads or writes the Windows registry, services, scheduled tasks, power plans, or the WPF GUI, UAC elevation, the remote `irm | iex` path, and backup/restore on real data. See docs/TEST-MATRIX.md; those rows remain "not run".

@@ -1,6 +1,6 @@
 # DIVoptimizer v0.8.0 - Test matrix
 
-**Status: NOT YET RUN.** No part of DIVoptimizer has been executed on Windows. The only checks done so far were static (delimiter balance, ASCII-only source, duplicate/undefined function names, identical shared restore core). Mark each row when you run it.
+**Status: NOT YET RUN.** No part of DIVoptimizer has been executed on Windows. Checks done so far: the real PowerShell parser (0 errors, PowerShell 7.4.6 on Linux), a dot-source smoke test of the pure functions on Linux, ASCII-only source, and identical shared restore core. Nothing that touches the Windows registry, services, tasks or the GUI has run. Mark each row when you run it.
 
 | # | Environment | Run | Expected | Result |
 |---|---|---|---|---|

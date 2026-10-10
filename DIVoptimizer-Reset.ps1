@@ -74,6 +74,7 @@ function Start-LogSession {
         if (-not (Test-Path -LiteralPath $Script:LogsDir)) { New-Item -ItemType Directory -Path $Script:LogsDir -Force | Out-Null }
         $stamp = Get-Date -Format 'yyyy-MM-dd_HHmmss'
         $Script:SessionLogPath = Join-Path $Script:LogsDir ("{0}_{1}.jsonl" -f $Prefix, $stamp)
+        $Script:SessionTextLogPath = Join-Path $Script:LogsDir ("{0}_{1}.log" -f $Prefix, $stamp)
         Write-Log -Level INFO -Action 'SESSION_START' -Message ("{0} v{1}" -f $Script:AppName, $Script:Version)
     } catch {
         $Script:SessionLogPath = $null
@@ -113,6 +114,11 @@ function Write-Log {
     try {
         $line = ConvertTo-Json -InputObject $entry -Compress -Depth 5
         Add-Content -LiteralPath $Script:SessionLogPath -Value $line -Encoding UTF8 -ErrorAction Stop
+        if ($Script:SessionTextLogPath) {
+            $text = ('{0} [{1}] {2} {3} {4} {5}' -f $entry.Timestamp, $Level, $Action, $Target, $Result, $Message).TrimEnd()
+            if ($ErrorText) { $text += ' ERROR: ' + $ErrorText }
+            Add-Content -LiteralPath $Script:SessionTextLogPath -Value $text -Encoding UTF8 -ErrorAction SilentlyContinue
+        }
     } catch {
         if (-not $Script:LogWarned) {
             $Script:LogWarned = $true
