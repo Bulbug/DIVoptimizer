@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 # ================================================================
-# DIVoptimizer v0.7.0
+# DIVoptimizer v0.8.0
 # Author  : Kaz
 #
 # A transparent, hardware-aware, reversible Windows optimization and
@@ -36,6 +36,8 @@ param(
     [string]$Format = 'txt',
     [switch]$CheckUpdate,
     [switch]$ShowVersion,
+    [switch]$Undo,
+    [switch]$Health,
     [string]$Preselect = ''
 )
 
@@ -48,12 +50,12 @@ if ($Script:RemoteRun) {
 }
 
 $Script:AppName       = 'DIVoptimizer'
-$Script:Version       = '0.7.0'
+$Script:Version       = '0.8.0'
 $Script:Author        = 'Kaz'
 $Script:SchemaVersion = 2
 $Script:Width         = 78
 $Script:DryRun        = [bool]$WhatIf
-$Script:ReadOnlyRun   = ([bool]$WhatIf -or [bool]$Scan -or [bool]$ShowVersion -or [bool]$CheckUpdate)
+$Script:ReadOnlyRun   = ([bool]$WhatIf -or [bool]$Scan -or [bool]$ShowVersion -or [bool]$CheckUpdate -or [bool]$Health)
 $Script:IsGui         = $false
 
 # Per-user data folder. HKCU backups belong to the user, and an elevated session of the SAME user
@@ -935,6 +937,7 @@ function Start-LogSession {
         if (-not (Test-Path -LiteralPath $Script:LogsDir)) { New-Item -ItemType Directory -Path $Script:LogsDir -Force | Out-Null }
         $stamp = Get-Date -Format 'yyyy-MM-dd_HHmmss'
         $Script:SessionLogPath = Join-Path $Script:LogsDir ("{0}_{1}.jsonl" -f $Prefix, $stamp)
+        $Script:SessionTextLogPath = Join-Path $Script:LogsDir ("{0}_{1}.log" -f $Prefix, $stamp)
         Write-Log -Level INFO -Action 'SESSION_START' -Message ("{0} v{1}" -f $Script:AppName, $Script:Version)
     } catch {
         $Script:SessionLogPath = $null
@@ -974,6 +977,11 @@ function Write-Log {
     try {
         $line = ConvertTo-Json -InputObject $entry -Compress -Depth 5
         Add-Content -LiteralPath $Script:SessionLogPath -Value $line -Encoding UTF8 -ErrorAction Stop
+        if ($Script:SessionTextLogPath) {
+            $text = ('{0} [{1}] {2} {3} {4} {5}' -f $entry.Timestamp, $Level, $Action, $Target, $Result, $Message).TrimEnd()
+            if ($ErrorText) { $text += ' ERROR: ' + $ErrorText }
+            Add-Content -LiteralPath $Script:SessionTextLogPath -Value $text -Encoding UTF8 -ErrorAction SilentlyContinue
+        }
     } catch {
         if (-not $Script:LogWarned) {
             $Script:LogWarned = $true
@@ -1715,58 +1723,10 @@ $Script:ServiceCatalog = @(
        Why = 'Preloads frequently used applications into memory.'
        Impact = 'Mostly helps HDDs. On SSDs the effect is usually small. Disabling can make first launches of some apps slightly slower.'
        Guidance = 'Keep enabled unless you have measured a problem.' },
-    @{ Name = 'WSearch'; Display = 'Windows Search'; Risk = 'ADVANCED'
-       Why = 'Builds the search index used by Start menu and File Explorer search.'
-       Impact = 'Disabling reduces indexing activity but makes searches slower and less complete.'
-       Guidance = 'Keep enabled unless you specifically want to stop indexing.' },
     @{ Name = 'DiagTrack'; Display = 'Connected User Experiences and Telemetry'; Risk = 'OPTIONAL'
        Why = 'Collects and sends diagnostic data to Microsoft.'
        Impact = 'Less diagnostic data is sent. Some Microsoft feedback/diagnostic features stop working.'
-       Guidance = 'Optional privacy preference; has no direct performance benefit you should count on.' },
-    @{ Name = 'dmwappushservice'; Display = 'WAP Push Message Routing'; Risk = 'OPTIONAL'
-       Why = 'Routes WAP push messages; used by some device-management and telemetry paths.'
-       Impact = 'Can affect device-management (MDM) enrollment scenarios.'
-       Guidance = 'Leave alone on work-managed PCs.' },
-    @{ Name = 'MapsBroker'; Display = 'Downloaded Maps Manager'; Risk = 'OPTIONAL'
-       Why = 'Updates offline maps for the Maps app.'
-       Impact = 'Offline maps stop updating. Nothing else depends on it for most users.'
-       Guidance = 'Safe to disable if you do not use offline maps.' },
-    @{ Name = 'RetailDemo'; Display = 'Retail Demo Service'; Risk = 'OPTIONAL'
-       Why = 'Used only for retail demo mode on display units.'
-       Impact = 'None for normal PCs.'
-       Guidance = 'Usually already disabled.' },
-    @{ Name = 'Fax'; Display = 'Fax'; Risk = 'OPTIONAL'
-       Why = 'Sends and receives faxes.'
-       Impact = 'Fax is unavailable.'
-       Guidance = 'Safe to disable if you do not fax.' },
-    @{ Name = 'XblAuthManager'; Display = 'Xbox Live Auth Manager'; Risk = 'ADVANCED'
-       Why = 'Xbox Live sign-in for Xbox app, Game Pass and some games.'
-       Impact = 'Xbox sign-in, Game Pass, and some Microsoft Store games (for example Minecraft) can stop working.'
-       Guidance = 'Do not disable if you use Xbox services.' },
-    @{ Name = 'XblGameSave'; Display = 'Xbox Live Game Save'; Risk = 'ADVANCED'
-       Why = 'Cloud saves for Xbox/Store games.'
-       Impact = 'Cloud saves for supported games stop syncing.'
-       Guidance = 'Do not disable if you use Xbox services.' },
-    @{ Name = 'XboxNetApiSvc'; Display = 'Xbox Live Networking Service'; Risk = 'ADVANCED'
-       Why = 'Xbox Live networking and multiplayer features.'
-       Impact = 'Xbox Live multiplayer and party chat can stop working.'
-       Guidance = 'Do not disable if you use Xbox services.' },
-    @{ Name = 'XboxGipSvc'; Display = 'Xbox Accessory Management Service'; Risk = 'ADVANCED'
-       Why = 'Manages Xbox accessories such as controllers.'
-       Impact = 'Xbox controllers may not be fully recognised.'
-       Guidance = 'Do not disable if you use an Xbox controller.' },
-    @{ Name = 'WerSvc'; Display = 'Windows Error Reporting'; Risk = 'ADVANCED'
-       Why = 'Collects crash information and offers to send it.'
-       Impact = 'You lose automatic crash diagnostics; troubleshooting becomes harder.'
-       Guidance = 'Keep enabled if you may need to diagnose crashes.' },
-    @{ Name = 'TabletInputService'; Display = 'Touch Keyboard and Handwriting Panel'; Risk = 'ADVANCED'; Guard = 'Touch'
-       Why = 'Provides touch keyboard, handwriting and pen input.'
-       Impact = 'Touch keyboard and handwriting stop working.'
-       Guidance = 'Blocked automatically when a touchscreen is detected.' },
-    @{ Name = 'PhoneSvc'; Display = 'Phone Service'; Risk = 'ADVANCED'
-       Why = 'Manages the telephony state of the device.'
-       Impact = 'Can affect Phone Link and cellular/telephony features.'
-       Guidance = 'Leave alone if you use Phone Link or a cellular modem.' }
+       Guidance = 'Optional privacy preference; has no direct performance benefit you should count on.' }
 )
 
 # Optional apps. EXACT package identifiers only; no wildcard matching is ever used for removal.
@@ -1812,10 +1772,9 @@ $Script:Profiles = [ordered]@{
 
 function New-Backup {
     param([string]$Description = '', [string]$ProfileName = '')
-    $base = Get-Date -Format 'yyyy-MM-dd_HHmmss'
-    $id = $base
-    $n = 2
-    while (Test-Path -LiteralPath (Join-Path $Script:BackupsDir $id)) { $id = ('{0}_{1}' -f $base, $n); $n++ }
+    $stamp = Get-Date -Format 'yyyy-MM-dd-HHmmss'
+    $id = ('backup-{0}-{1:X4}' -f $stamp, (Get-Random -Minimum 0 -Maximum 65536))
+    while (Test-Path -LiteralPath (Join-Path $Script:BackupsDir $id)) { $id = ('backup-{0}-{1:X4}' -f $stamp, (Get-Random -Minimum 0 -Maximum 65536)) }
     $dir = Join-Path $Script:BackupsDir $id
     foreach ($sub in @('registry', 'services', 'tasks', 'startup', 'power', 'settings')) {
         New-Item -ItemType Directory -Path (Join-Path $dir $sub) -Force -ErrorAction Stop | Out-Null
@@ -2032,9 +1991,13 @@ function New-Tweak {
     return [pscustomobject]$t
 }
 
+# Only these services may ever be changed. Everything else is protected by default (deny by default).
+$Script:ServiceAllowList = @('DiagTrack', 'SysMain')
+
 function Test-ServiceProtected {
     param([string]$Name)
-    return (@($Script:DoNotTouchServices | Where-Object { $_ -ieq $Name }).Count -gt 0)
+    if (@($Script:DoNotTouchServices | Where-Object { $_ -ieq $Name }).Count -gt 0) { return $true }
+    return (@($Script:ServiceAllowList | Where-Object { $_ -ieq $Name }).Count -eq 0)
 }
 
 function Test-PackageProtected {
@@ -2375,6 +2338,39 @@ function Test-TweakApplied {
     }
 }
 
+# Tiers: SAFE = low risk and fully reversible; BALANCED = optional, preference-based; ADVANCED = never pre-selected.
+function Get-TweakTier {
+    param($Tweak)
+    switch ([string]$Tweak.Risk) {
+        'LOW RISK' { return 'SAFE' }
+        'OPTIONAL' { return 'BALANCED' }
+        default    { return 'ADVANCED' }
+    }
+}
+
+# Tweaks that cost battery life or add heat; never pre-selected on a laptop or tablet.
+$Script:LaptopSensitiveIds = @('power-performance', 'hibernate-off')
+
+# WinUtil Compatibility Mode: if a setting was already changed by another tool (WinUtil or similar) to a value
+# that is neither Windows' default nor ours, say so and do not pre-select it. The user can still choose it.
+function Get-TweakConflict {
+    param($Tweak)
+    try {
+        if ($Tweak.Kind -eq 'Registry') {
+            $e = $Tweak.Entries[0]
+            $st = Get-RegistryValueState -Path $e.Path -Name $e.Name
+            if ($st.Exists -and -not (Test-RegistryValueEquals -Type $e.Type -A $st.Value -B (ConvertFrom-RegistryRecordValue -Type $e.Type -Value $e.Value))) {
+                return ('Already set to {0} by Windows or another tool.' -f (ConvertTo-StateLabel -Value $st.Value -Labels $Tweak.Labels))
+            }
+        }
+        if ($Tweak.Kind -eq 'PowerPlan') {
+            $p = Get-ActivePowerPlan
+            if ($p -and $p.Guid -ne $Script:PlanGuids.Balanced -and $p.Guid -ne $Script:PlanGuids[$Tweak.PlanKey]) { return ('Power plan is already set to {0}.' -f $p.Name) }
+        }
+    } catch { Write-Log -Level WARN -Action 'CONFLICT_CHECK' -Target $Tweak.Id -ErrorText $_.Exception.Message }
+    return ''
+}
+
 function Get-Recommendations {
     # Returns one row per tweak with the engine's decision. -All includes non-recommended tweaks.
     param($Scan, [string]$ProfileName = '', [switch]$All)
@@ -2400,13 +2396,18 @@ function Get-Recommendations {
         $cur = ''
         $new = ''
         if ($compat.Ok -and -not $block) { try { $cur = Get-TweakCurrent -Tweak $t; $new = Get-TweakNew -Tweak $t } catch { Write-Log -Level WARN -Action 'TWEAK_STATE' -Target $t.Id -ErrorText $_.Exception.Message } }
+        $tier = Get-TweakTier -Tweak $t
+        $laptopSafe = -not (($Scan.Hardware.DeviceType -in @('Laptop', 'Tablet')) -and ($Script:LaptopSensitiveIds -contains $t.Id))
+        $conflict = ''
+        if ($compat.Ok -and -not $block -and -not $applied -and $t.Kind -in @('Registry', 'PowerPlan')) { $conflict = Get-TweakConflict -Tweak $t }
         $rows += [pscustomobject]@{
+            Tier = $tier; LaptopSafe = $laptopSafe; Conflict = $conflict
             Tweak = $t; Id = $t.Id; Name = $t.Name; Category = $t.Category; Risk = $t.Risk; Kind = $t.Kind
             Current = $cur; New = $new; Why = $(if ($why) { [string]$why } else { $t.Reason })
             Reason = $t.Reason; Downside = $t.Downside; Restart = $t.Restart; Rollback = $t.Rollback; RollbackNote = $t.RollbackNote
             Recommended = $recommended; Compatible = $compat.Ok; CompatMessage = $compat.Message; Blocked = $block
             Applied = $applied; Selectable = $selectable
-            DefaultSelected = ($selectable -and $recommended -and $t.Risk -eq 'LOW RISK')
+            DefaultSelected = ($selectable -and $recommended -and $tier -eq 'SAFE' -and $t.Rollback -eq 'Full' -and $laptopSafe -and -not $conflict -and $t.Kind -ne 'Info')
         }
     }
     return @($rows)
@@ -3076,9 +3077,10 @@ function ConvertTo-SafeIdList {
 
 function Get-RelaunchModeArgs {
     # Switches that make the elevated copy start in the same mode. An empty result means the GUI.
-    param([bool]$IsConsole, [bool]$IsQuick, [string]$ProfileId = '')
+    param([bool]$IsConsole, [bool]$IsQuick, [string]$ProfileId = '', [bool]$IsUndo = $false)
     $a = @()
-    if ($IsQuick) { $a += '-Quick' }
+    if ($IsUndo) { $a += '-Undo' }
+    elseif ($IsQuick) { $a += '-Quick' }
     elseif ($ProfileId -and $Script:Profiles.Contains($ProfileId)) { $a += '-ProfileName'; $a += $ProfileId }
     elseif ($IsConsole) { $a += '-Console' }
     return $a
@@ -4062,6 +4064,57 @@ function Invoke-DryRunReport {
     Write-Host ''
     Write-Host 'NO CHANGES WERE MADE.' -ForegroundColor Green
     Write-Host ''
+}
+
+# ---------------------------------------------------------------
+# HEALTH CHECK (read-only) AND UNDO (restore the newest backup)
+# ---------------------------------------------------------------
+
+function Get-HealthReport {
+    $rows = New-Object System.Collections.Generic.List[object]
+    $add = { param($n, $ok, $d) $rows.Add([pscustomobject]@{ Check = $n; Ok = [bool]$ok; Detail = $d }) }
+    & $add 'Windows PowerShell 5.1 or newer' ($PSVersionTable.PSVersion.Major -ge 5) ([string]$PSVersionTable.PSVersion)
+    & $add 'Running as Administrator' (Test-Administrator) 'Needed to apply or restore system settings; not needed for -Scan, -WhatIf or -Health.'
+    $writable = $false
+    try {
+        if (-not (Test-Path -LiteralPath $Script:BackupsDir)) { $writable = $true } else { $probe = Join-Path $Script:BackupsDir '.health'; Set-Content -LiteralPath $probe -Value 'x' -ErrorAction Stop; Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue; $writable = $true }
+    } catch { $writable = $false }
+    & $add 'Backup folder is writable' $writable $Script:BackupsDir
+    $backups = @(Get-BackupList)
+    & $add 'Backups found' $true ('{0} backup(s)' -f $backups.Count)
+    $bad = 0
+    foreach ($b in $backups) {
+        if ($b.Format -eq 'v2') { $c = Test-BackupDir -Dir $b.Path; if (-not $c.Ok) { $bad++ } } elseif ($b.Format -in @('corrupt', 'unknown')) { $bad++ }
+    }
+    & $add 'Backups pass verification' ($bad -eq 0) $(if ($bad -eq 0) { 'All checked backups verified.' } else { ('{0} backup(s) failed verification and cannot be restored.' -f $bad) })
+    $svcOk = ($Script:ServiceAllowList.Count -eq 2)
+    & $add 'Service allow-list' $svcOk ('Only these may be changed: ' + ($Script:ServiceAllowList -join ', '))
+    return @($rows)
+}
+
+function Show-HealthReport {
+    Write-Host ''
+    Write-Host ('DIVoptimizer v{0} - health check (read-only, changes nothing)' -f $Script:Version) -ForegroundColor Cyan
+    foreach ($r in @(Get-HealthReport)) {
+        $tag = 'OK  '; $col = 'Green'
+        if (-not $r.Ok) { $tag = 'WARN'; $col = 'Yellow' }
+        Write-Host ('  [{0}] {1} - {2}' -f $tag, $r.Check, $r.Detail) -ForegroundColor $col
+    }
+    Write-Host ''
+}
+
+function Invoke-UndoLast {
+    # Restores the newest backup that passes verification, after showing what it is and asking first.
+    $cands = @(Get-BackupList | Where-Object { $_.Format -in @('v2', 'legacy') })
+    if ($cands.Count -eq 0) { Write-Tag SKIP 'There is no backup to undo.'; return }
+    $pick = $null
+    foreach ($b in $cands) {
+        if ($b.Format -eq 'v2') { $c = Test-BackupDir -Dir $b.Path; if (-not $c.Ok) { Write-Tag WARN ("Skipping {0}: it failed verification." -f $b.Id); continue } }
+        $pick = $b; break
+    }
+    if (-not $pick) { Write-Tag FAIL 'No backup passed verification, so nothing was restored.'; return }
+    Write-Tag INFO ('The newest usable backup is {0}.' -f $pick.Id)
+    Invoke-RestoreFlow -Backup $pick
 }
 
 function Show-MainMenu {
@@ -5092,6 +5145,11 @@ function Invoke-DIVoptimizerMain {
         return
     }
 
+    if ($Health) {
+        Show-HealthReport
+        return
+    }
+
     if ($Scan) {
         # SCAN-ONLY: reads system state, changes nothing, writes no log or backup.
         $scanResult = Get-SystemScan
@@ -5130,7 +5188,7 @@ function Invoke-DIVoptimizerMain {
         Write-Host '  DIVoptimizer needs Administrator rights.' -ForegroundColor Yellow
         Write-Host '  It backs up and changes system settings, services and scheduled tasks, and creates restore points.' -ForegroundColor DarkGray
         Write-Host '  Windows will now ask for permission (UAC). Nothing is changed until you review and approve it.' -ForegroundColor DarkGray
-        $modeArgs = @(Get-RelaunchModeArgs -IsConsole ([bool]$Console) -IsQuick ([bool]$Quick) -ProfileId $ProfileName)
+        $modeArgs = @(Get-RelaunchModeArgs -IsConsole ([bool]$Console) -IsQuick ([bool]$Quick) -ProfileId $ProfileName -IsUndo ([bool]$Undo))
         $ok = Request-Elevation -Why 'DIVoptimizer must run as Administrator' -Ids $Script:PreselectIds -Silent -ModeArgs $modeArgs
         if ($ok) {
             Write-Host '  A new Administrator window was opened. This window can be closed.' -ForegroundColor Green
@@ -5142,6 +5200,12 @@ function Invoke-DIVoptimizerMain {
     }
 
     Start-LogSession
+
+    if ($Undo) {
+        Initialize-Console
+        Invoke-UndoLast
+        return
+    }
 
     if ($Quick -or $ProfileName) {
         Initialize-Console
@@ -5173,7 +5237,7 @@ function Clear-RemoteSessionState {
     # After an irm | iex run, remove every function and variable this script added to the user's session.
     $keepF = @($Script:PreFunctions)
     $keepV = @($Script:PreVariables) + @('LASTEXITCODE', 'Matches', 'Error', 'PSItem', '_', '?', '^', '$')
-    $paramNames = @('Console', 'Scan', 'WhatIf', 'Quick', 'ProfileName', 'Report', 'Format', 'CheckUpdate', 'ShowVersion', 'Preselect')
+    $paramNames = @('Console', 'Scan', 'WhatIf', 'Quick', 'ProfileName', 'Report', 'Format', 'CheckUpdate', 'ShowVersion', 'Undo', 'Health', 'Preselect')
     $newFunctions = @(Get-ChildItem -Path Function: | Where-Object { $keepF -notcontains $_.Name } | ForEach-Object { $_.Name })
     $newVariables = @(Get-ChildItem -Path Variable: | Where-Object { $keepV -notcontains $_.Name } | ForEach-Object { $_.Name })
     foreach ($n in ($newVariables + $paramNames)) { Remove-Variable -Name $n -Scope Global -Force -ErrorAction SilentlyContinue }

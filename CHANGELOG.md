@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.0 (release candidate - untested on Windows)
+- Services are now deny-by-default: only DiagTrack and SysMain can be changed; every other service is protected.
+- The service catalog was reduced to those two services.
+- New backup IDs: `backup-yyyy-MM-dd-HHmmss-XXXX`. Older IDs still restore.
+- Every recommendation now has a tier: SAFE, BALANCED or ADVANCED.
+- Only SAFE, fully reversible, laptop-safe tweaks are pre-selected. Nothing else ever is.
+- Power-plan and hibernation tweaks are never pre-selected on laptops or tablets.
+- Compatibility check: if a setting was already changed by another tool (WinUtil or similar) to a different value, the row says so and is not pre-selected. Settings already at our target are skipped.
+- New `-Health`: read-only self-check (PowerShell version, Administrator, backup folder, backup verification, allow-list).
+- New `-Undo`: finds the newest backup that passes verification, shows it, asks, then restores it. Needs Administrator (UAC relaunch keeps the mode).
+- Every session now also writes a plain-text `.log` next to the JSON log.
+- Added docs/TWEAK-INVENTORY.md, docs/TEST-MATRIX.md and AUDIT-v0.8.0.md.
+- Nothing in this version has been run on Windows.
+
 ## DIVoptimizer v0.7.0
 
 ### Added

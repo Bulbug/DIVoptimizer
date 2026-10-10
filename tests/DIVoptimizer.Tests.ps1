@@ -1,4 +1,4 @@
-# Pester 5 tests for DIVoptimizer v0.7.0
+# Pester 5 tests for DIVoptimizer v0.8.0
 #
 # SAFETY: these tests never touch your real Windows configuration.
 #   * Registry tests use Pester's TestRegistry: drive (a throw-away key under HKCU).
@@ -35,8 +35,8 @@ BeforeAll {
 }
 
 Describe 'Version consistency' {
-    It 'uses 0.7.0 everywhere' {
-        $Script:Version | Should -Be '0.7.0'
+    It 'uses 0.8.0 everywhere' {
+        $Script:Version | Should -Be '0.8.0'
         (Get-Content (Join-Path $script:Root 'DIVoptimizer.ps1') -Raw) | Should -Match 'DIVoptimizer v0\.7\.0'
         (Get-Content (Join-Path $script:Root 'DIVoptimizer-Reset.ps1') -Raw) | Should -Match "Version\s+= '0\.7\.0'"
     }
@@ -384,7 +384,10 @@ Describe 'Safety lists are enforced' {
         Test-PackageProtected -Name 'Microsoft.BingNews' | Should -BeFalse
         Test-ServiceProtected -Name 'wuauserv' | Should -BeTrue
         Test-ServiceProtected -Name 'WinDefend' | Should -BeTrue
-        Test-ServiceProtected -Name 'MapsBroker' | Should -BeFalse
+        Test-ServiceProtected -Name 'MapsBroker' | Should -BeTrue   # not on the allow-list
+        Test-ServiceProtected -Name 'DiagTrack' | Should -BeFalse
+        Test-ServiceProtected -Name 'SysMain' | Should -BeFalse
+        Test-ServiceProtected -Name 'SomeUnknownService' | Should -BeTrue
     }
     It 'rejects wildcard package names' {
         { Remove-AppPackageExact -Name 'Microsoft.*' } | Should -Throw
@@ -437,6 +440,8 @@ Describe 'Recommendation engine' {
         $all = @(Get-Recommendations -Scan (New-TestScan -Ram 8) -All)
         @($all | Where-Object { $_.DefaultSelected -and $_.Risk -ne 'LOW RISK' }).Count | Should -Be 0
         @($all | Where-Object { $_.DefaultSelected -and $_.Kind -eq 'Service' }).Count | Should -Be 0
+        @($all | Where-Object { $_.DefaultSelected -and $_.Tier -ne 'SAFE' }).Count | Should -Be 0
+        @($all | Where-Object { $_.DefaultSelected -and $_.Rollback -ne 'Full' }).Count | Should -Be 0
     }
     It 'blocks the touch keyboard service on a touchscreen' {
         $row = @(Get-Recommendations -Scan (New-TestScan -Touch $true) -All | Where-Object { $_.Id -like 'svc-tabletinputservice*' })[0]
@@ -590,5 +595,30 @@ Describe 'Administrator relaunch and progress' {
         { Write-Busy -Activity 'Test' -Status 'Step' -Percent 50 } | Should -Not -Throw
         { Write-Busy -Activity 'Test' -Status 'Step' } | Should -Not -Throw
         { Clear-Busy } | Should -Not -Throw
+    }
+}
+
+Describe 'Tiers and compatibility (v0.8.0)' {
+    It 'maps risk levels to tiers' {
+        Get-TweakTier -Tweak ([pscustomobject]@{ Risk = 'LOW RISK' }) | Should -Be 'SAFE'
+        Get-TweakTier -Tweak ([pscustomobject]@{ Risk = 'OPTIONAL' }) | Should -Be 'BALANCED'
+        Get-TweakTier -Tweak ([pscustomobject]@{ Risk = 'ADVANCED' }) | Should -Be 'ADVANCED'
+    }
+    It 'only allows two services to be changed' {
+        $Script:ServiceAllowList.Count | Should -Be 2
+    }
+    It 'creates backup IDs in the new format' {
+        'backup-2026-10-10-122500-0A1F' | Should -Match '^backup-\d{4}-\d{2}-\d{2}-\d{6}-[0-9A-F]{4}$'
+    }
+}
+
+Describe 'Health and Undo (v0.8.0)' {
+    It 'health report returns the expected checks' {
+        $r = @(Get-HealthReport)
+        $r.Count | Should -BeGreaterThan 4
+        ($r | Where-Object { $_.Check -eq 'Service allow-list' }).Ok | Should -BeTrue
+    }
+    It 'relaunch keeps -Undo' {
+        (Get-RelaunchModeArgs -IsConsole $false -IsQuick $false -IsUndo $true) | Should -Contain '-Undo'
     }
 }

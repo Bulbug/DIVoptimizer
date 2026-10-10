@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 # ================================================================
-# DIVoptimizer-Reset.ps1   (v0.7.0)   EMERGENCY RESTORE
+# DIVoptimizer-Reset.ps1   (v0.8.0)   EMERGENCY RESTORE
 #
 # Independent of DIVoptimizer.ps1 and its GUI. It embeds the same
 # restore code, finds your backups, verifies them and restores
@@ -18,7 +18,7 @@ param(
 
 $Script:ResetUrl = 'https://raw.githubusercontent.com/Bulbug/DIVoptimizer/refs/heads/main/DIVoptimizer-Reset.ps1'
 $Script:AppName       = 'DIVoptimizer Emergency Restore'
-$Script:Version       = '0.7.0'
+$Script:Version       = '0.8.0'
 $Script:SchemaVersion = 2
 $Script:DryRun        = $false
 $Script:ReadOnlyRun   = $false

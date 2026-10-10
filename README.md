@@ -1,4 +1,4 @@
-# DIVoptimizer v0.7.0
+# DIVoptimizer v0.8.0
 
 A transparent, hardware-aware, **reversible** Windows optimization and maintenance utility written in PowerShell.
 
@@ -57,7 +57,7 @@ You can also save the script and run the file; everything works the same either 
 **Trust note.** Running `irm | iex` executes whatever is currently published at that URL, with your privileges. Only run it from a repository you trust, and if you maintain the repo, protect `main` (2FA, branch protection). To use a fixed, reviewed version instead of the latest `main`, pin a tag or commit:
 
 ```powershell
-$env:DIVOPTIMIZER_URL = "https://raw.githubusercontent.com/Bulbug/DIVoptimizer/v0.7.0/DIVoptimizer.ps1"
+$env:DIVOPTIMIZER_URL = "https://raw.githubusercontent.com/Bulbug/DIVoptimizer/v0.8.0/DIVoptimizer.ps1"
 irm $env:DIVOPTIMIZER_URL | iex
 ```
 
@@ -262,3 +262,10 @@ Invoke-Pester .\tests\DIVoptimizer.Tests.ps1 -Output Detailed
 ## License
 
 No license has been chosen yet. See `LICENSE`.
+
+
+## New in v0.8.0
+
+- `-Health` - read-only self-check.
+- `-Undo` - restore the newest verified backup (asks first).
+- Plain-text `.log` alongside the JSON log in `%LOCALAPPDATA%\DIVoptimizer\Logs`.
