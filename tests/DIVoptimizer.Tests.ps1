@@ -1,4 +1,4 @@
-# Pester 5 tests for DIVoptimizer v0.8.0
+# Pester 5 tests for DIVoptimizer v0.16.0
 #
 # SAFETY: these tests never touch your real Windows configuration.
 #   * Registry tests use Pester's TestRegistry: drive (a throw-away key under HKCU).
@@ -35,8 +35,8 @@ BeforeAll {
 }
 
 Describe 'Version consistency' {
-    It 'uses 0.8.0 everywhere' {
-        $Script:Version | Should -Be '0.8.0'
+    It 'uses 0.16.0 everywhere' {
+        $Script:Version | Should -Be '0.16.0'
         (Get-Content (Join-Path $script:Root 'DIVoptimizer.ps1') -Raw) | Should -Match 'DIVoptimizer v0\.7\.0'
         (Get-Content (Join-Path $script:Root 'DIVoptimizer-Reset.ps1') -Raw) | Should -Match "Version\s+= '0\.7\.0'"
     }
@@ -622,3 +622,379 @@ Describe 'Health and Undo (v0.8.0)' {
         (Get-RelaunchModeArgs -IsConsole $false -IsQuick $false -IsUndo $true) | Should -Contain '-Undo'
     }
 }
+
+Describe 'Command echo (v0.8.0)' {
+    It 'formats registry values for display' {
+        Format-RegCommandValue -Type 'DWord' -Value 1 | Should -Be '1'
+        Format-RegCommandValue -Type 'String' -Value "it's" | Should -Be "'it''s'"
+        Format-RegCommandValue -Type 'Binary' -Value ([byte[]](1,2,3)) | Should -Be '[binary, 3 bytes]'
+    }
+    It 'prints nothing in dry-run mode' {
+        $Script:DryRun = $true
+        { Write-Command 'x' } | Should -Not -Throw
+        $Script:DryRun = $false
+    }
+}
+
+Describe 'Tweaks hub (v0.8.1)' {
+    It 'defines the tweaks hub page' {
+        Get-Command Show-GuiTweaksHub -ErrorAction Stop | Should -Not -BeNullOrEmpty
+    }
+}
+
+Describe 'DIVuninstaller (v0.9.0)' {
+    It 'reads uninstall commands safely' {
+        $c = Split-UninstallCommand -Text '"C:\Program Files\Acme\unins000.exe" /SILENT'
+        $c.File | Should -Be 'C:\Program Files\Acme\unins000.exe'
+        $c.Arguments | Should -Be '/SILENT'
+        $m = Split-UninstallCommand -Text 'MsiExec.exe /I{12345678-1234-1234-1234-123456789ABC}'
+        $m.IsMsi | Should -BeTrue
+        $m.Arguments | Should -Be '/x {12345678-1234-1234-1234-123456789ABC}'
+        Split-UninstallCommand -Text 'unins.exe /x' | Should -BeNullOrEmpty
+        Split-UninstallCommand -Text 'msiexec.exe /i something' | Should -BeNullOrEmpty
+        Split-UninstallCommand -Text '' | Should -BeNullOrEmpty
+    }
+    It 'protects system, runtime and driver programs' {
+        Test-ProgramProtected -Name 'Microsoft Visual C++ 2015-2022 Redistributable (x64)' | Should -BeTrue
+        Test-ProgramProtected -Name 'NVIDIA Graphics Driver 551.23' | Should -BeTrue
+        Test-ProgramProtected -Name 'Discord' | Should -BeFalse
+    }
+    It 'converts registry paths for reg.exe' {
+        ConvertTo-RegExePath -Path 'HKCU:\Software\Acme' | Should -Be 'HKCU\Software\Acme'
+        ConvertTo-RegExePath -Path 'HKEY_LOCAL_MACHINE\SOFTWARE\Acme' | Should -Be 'HKLM\SOFTWARE\Acme'
+    }
+    It 'never offers protected folders as leftovers' {
+        Test-LeftoverPathAllowed -Path (Join-Path $env:ProgramFiles 'Microsoft') | Should -BeFalse
+        Test-LeftoverPathAllowed -Path $env:SystemRoot | Should -BeFalse
+        Test-LeftoverPathAllowed -Path 'C:\' | Should -BeFalse
+    }
+    It 'finds, quarantines and restores leftovers by exact name' {
+        $root = Join-Path $TestDrive 'pf'
+        New-Item -ItemType Directory -Path (Join-Path $root 'Acme Tool\bin'), (Join-Path $root 'Microsoft') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $root 'Acme Tool\bin\a.txt') -Value 'hello'
+        $prog = [pscustomobject]@{ Name = 'Acme Tool'; Publisher = 'Acme Corp'; Version = '1'; InstallLocation = (Join-Path $root 'Acme Tool'); KeyPath = 'HKEY_CURRENT_USER\Software\X' }
+        $items = @(Get-ProgramLeftovers -Program $prog -FolderRoots @($root) -RegistryRoots @() -RunKeys @())
+        $items.Count | Should -Be 1
+        @($items | Where-Object { $_.Path -like '*Microsoft*' }).Count | Should -Be 0
+        $q = Join-Path $TestDrive 'q'
+        $m = Move-LeftoversToQuarantine -Items $items -ProgramName 'Acme Tool' -QuarantineRoot $q
+        $m.Moved | Should -Be 1
+        Test-Path -LiteralPath (Join-Path $root 'Acme Tool') | Should -BeFalse
+        $s = @(Get-QuarantineList -Root $q)
+        $r = Restore-Quarantine -Session $s[0]
+        $r.Restored | Should -Be 1
+        Get-Content -LiteralPath (Join-Path $root 'Acme Tool\bin\a.txt') | Should -Be 'hello'
+    }
+    It 'refuses to delete anything outside the quarantine' {
+        { Remove-QuarantineFolder -Dir $TestDrive -Root (Join-Path $TestDrive 'q') } | Should -Throw
+    }
+}
+
+Describe 'DIVuninstaller scan levels and forced removal (v0.10.0)' {
+    BeforeEach {
+        $Script:DryRun = $false
+        $r = Join-Path $TestDrive 'v10'
+        New-Item -ItemType Directory -Path (Join-Path $r 'pf\Zeta App'), (Join-Path $r 'pf\Zeta Inc\Zeta App'), (Join-Path $r 'appdata\Zeta App'), (Join-Path $r 'desk') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $r 'pf\Zeta App\z.txt') -Value 'z'
+        Set-Content -LiteralPath (Join-Path $r 'pf\Zeta Inc\Zeta App\z2.txt') -Value 'z2'
+        Set-Content -LiteralPath (Join-Path $r 'appdata\Zeta App\cfg.ini') -Value 'c'
+        Set-Content -LiteralPath (Join-Path $r 'desk\Zeta App.lnk') -Value 'x'
+        $Script:z = [pscustomobject]@{ Name = 'Zeta App'; Publisher = 'Zeta Inc'; Version = '2'; InstallLocation = (Join-Path $r 'pf\Zeta App'); KeyPath = 'HKEY_CURRENT_USER\Software\Nope\Zeta' }
+        $Script:roots = @((Join-Path $r 'pf'), (Join-Path $r 'appdata'))
+        $Script:safeRoots = @((Join-Path $r 'pf'))
+        $Script:desk = @((Join-Path $r 'desk'))
+        $Script:r = $r
+    }
+    It 'Safe skips AppData, Moderate includes it, Advanced adds shortcuts and the publisher folder' {
+        $safe = @(Get-ProgramLeftovers -Program $Script:z -Mode Safe -FolderRoots $Script:roots -SafeFolderRoots $Script:safeRoots -RegistryRoots @() -RunKeys @() -ShortcutRoots $Script:desk -AppPathsKeys @())
+        $mod = @(Get-ProgramLeftovers -Program $Script:z -Mode Moderate -FolderRoots $Script:roots -SafeFolderRoots $Script:safeRoots -RegistryRoots @() -RunKeys @() -ShortcutRoots $Script:desk -AppPathsKeys @())
+        $adv = @(Get-ProgramLeftovers -Program $Script:z -Mode Advanced -FolderRoots $Script:roots -SafeFolderRoots $Script:safeRoots -RegistryRoots @() -RunKeys @() -ShortcutRoots $Script:desk -AppPathsKeys @())
+        @($safe | Where-Object { $_.Path -like '*appdata*' }).Count | Should -Be 0
+        @($mod | Where-Object { $_.Path -like '*appdata*' }).Count | Should -Be 1
+        @($adv | Where-Object { $_.Type -eq 'File' }).Count | Should -Be 1
+        @($adv | Where-Object { $_.Type -eq 'EmptyFolder' }).Count | Should -Be 1
+        @($safe | Where-Object { $_.Type -eq 'EmptyFolder' }).Count | Should -Be 0
+    }
+    It 'never removes a publisher folder that still has files' {
+        $adv = @(Get-ProgramLeftovers -Program $Script:z -Mode Advanced -FolderRoots $Script:roots -SafeFolderRoots $Script:safeRoots -RegistryRoots @() -RunKeys @() -ShortcutRoots $Script:desk -AppPathsKeys @())
+        $pub = @($adv | Where-Object { $_.Type -eq 'EmptyFolder' })
+        $m = Move-LeftoversToQuarantine -Items $pub -ProgramName 'Zeta' -QuarantineRoot (Join-Path $Script:r 'q')
+        $m.Moved | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $Script:r 'pf\Zeta Inc\Zeta App\z2.txt') | Should -BeTrue
+    }
+    It 'forced mode needs no uninstaller and still refuses protected programs' {
+        $Script:DryRun = $true
+        $f = Invoke-ProgramUninstall -Program ([pscustomobject]@{ Name = 'Zeta'; Protected = $false; UninstallString = ''; KeyPath = 'x' }) -SkipUninstaller
+        $f.Forced | Should -BeTrue
+        $Script:DryRun = $false
+        { Invoke-ProgramUninstall -Program ([pscustomobject]@{ Name = 'VC'; Protected = $true; UninstallString = 'x'; KeyPath = 'x' }) -SkipUninstaller } | Should -Throw
+    }
+    It 'records and lists uninstalls' {
+        $Script:UninstalledDir = Join-Path $Script:r 'unin'
+        $d = Join-Path $Script:UninstalledDir '2026-10-11-100000-Zeta'
+        New-Item -ItemType Directory -Path $d -Force | Out-Null
+        Write-JsonFile -Path (Join-Path $d 'program.json') -Object ([ordered]@{ Name = 'Zeta App'; Version = '2'; Started = '2026-10-11 10:00:00'; Forced = $false })
+        Update-UninstallRecord -Dir $d -Values @{ Mode = 'Moderate'; LeftoversMoved = 2 }
+        $h = @(Get-UninstallHistory -Root $Script:UninstalledDir)
+        $h.Count | Should -Be 1
+        $h[0].Mode | Should -Be 'Moderate'
+    }
+}
+
+Describe 'DIVuninstaller review screen, exclude list and forced-by-name (v0.11.0)' {
+    BeforeEach {
+        $Script:DryRun = $false
+        $r = Join-Path $TestDrive 'v11'
+        $Script:ExcludeFile = Join-Path $r 'ex.json'
+        $Script:UninstallerSettingsFile = Join-Path $r 'set.json'
+        New-Item -ItemType Directory -Path (Join-Path $r 'pf\Yeti Tool\bin'), (Join-Path $r 'pf\Yeti Corp\Yeti Tool') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $r 'pf\Yeti Tool\bin\a.txt') -Value 'a'
+        Set-Content -LiteralPath (Join-Path $r 'pf\Yeti Corp\Yeti Tool\b.txt') -Value 'b'
+        $Script:R11 = $r
+    }
+    It 'normalises registry and folder paths to one spelling' {
+        ConvertTo-ExcludeKey 'HKEY_LOCAL_MACHINE\SOFTWARE\Acme\' | Should -Be 'HKLM:\SOFTWARE\Acme'
+        ConvertTo-ExcludeKey 'C:/a/b/' | Should -Be 'C:\a\b'
+    }
+    It 'rejects patterns that would match too much' {
+        foreach ($p in @('*', 'C:\*', 'HKLM:\*', 'C:\a')) { Get-ExcludePatternProblem $p | Should -Not -BeNullOrEmpty }
+        Get-ExcludePatternProblem 'C:\Program Files\MyApp' | Should -BeNullOrEmpty
+    }
+    It 'matches a pattern and everything under it, and nothing similar' {
+        $pats = @('C:\Program Files\MyApp', 'C:\Users\*\AppData\Local\Cache*')
+        Test-LeftoverExcluded -Path 'c:\program files\myapp\bin' -Patterns $pats | Should -BeTrue
+        Test-LeftoverExcluded -Path 'C:\Users\bob\AppData\Local\CacheStuff' -Patterns $pats | Should -BeTrue
+        Test-LeftoverExcluded -Path 'C:\Program Files\MyAppExtra' -Patterns $pats | Should -BeFalse
+    }
+    It 'marks leftovers Created or Protected and sets a parent' {
+        [void](Add-ExcludeEntry -Pattern (Join-Path $Script:R11 'pf\Yeti Corp\Yeti Tool'))
+        $prog = [pscustomobject]@{ Name = 'Yeti Tool'; Publisher = 'Yeti Corp'; Version = '1'; InstallLocation = (Join-Path $Script:R11 'pf\Yeti Tool'); KeyPath = 'HKEY_CURRENT_USER\Software\X' }
+        $items = @(Get-ProgramLeftovers -Program $prog -FolderRoots @((Join-Path $Script:R11 'pf')) -RegistryRoots @() -RunKeys @())
+        @($items | Where-Object Status -eq 'Created').Count | Should -Be 1
+        @($items | Where-Object Status -eq 'Protected').Count | Should -Be 1
+        @($items | Where-Object Parent).Count | Should -Be 2
+    }
+    It 'checks the exclude list again when moving, even if the item says Created' {
+        [void](Add-ExcludeEntry -Pattern (Join-Path $Script:R11 'pf\Yeti Corp\Yeti Tool'))
+        $forged = [pscustomobject]@{ Type = 'Folder'; Path = (Join-Path $Script:R11 'pf\Yeti Corp\Yeti Tool'); Name = ''; Detail = 'x'; SizeBytes = 0; Risk = 'LOW'; Status = 'Created' }
+        $m = Move-LeftoversToQuarantine -Items @($forged) -ProgramName 'Yeti Tool' -QuarantineRoot (Join-Path $Script:R11 'q')
+        $m.Moved | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $Script:R11 'pf\Yeti Corp\Yeti Tool\b.txt') | Should -BeTrue
+    }
+    It 'options default to off and are saved' {
+        $s = Get-UninstallerSettings
+        $s.CheckAllByDefault | Should -BeFalse; $s.ForceStopExecutables | Should -BeFalse; $s.OnlyBuiltIn | Should -BeFalse
+        [void](Set-UninstallerSetting -Name 'OnlyBuiltIn' -Value $true)
+        (Get-UninstallerSettings).OnlyBuiltIn | Should -BeTrue
+        $Script:GuiUninstallMode = 'Advanced'
+        Get-GuiScanModeKey | Should -Be 'None'
+    }
+    It 'finds uninstallers by exact name, wildcard, several names or folder, never by part of a name' {
+        $progs = @(
+            [pscustomobject]@{ Name = 'Yeti Tool'; Version = '1'; InstallLocation = (Join-Path $Script:R11 'pf\Yeti Tool'); KeyPath = 'K1'; Protected = $false },
+            [pscustomobject]@{ Name = 'Other Thing'; Version = '2'; InstallLocation = (Join-Path $Script:R11 'pf\Other'); KeyPath = 'K2'; Protected = $false })
+        @(Find-UninstallMatches -Name 'yeti tool' -Programs $progs).Count | Should -Be 1
+        @(Find-UninstallMatches -Name 'Other*' -Programs $progs).Count | Should -Be 1
+        @(Find-UninstallMatches -Name 'Yeti Tool; Other Thing' -Programs $progs).Count | Should -Be 2
+        @(Find-UninstallMatches -Name 'Yeti' -Programs $progs).Count | Should -Be 0
+    }
+    It 'builds a forced stand-in without an uninstall key and refuses unsafe input' {
+        $f = New-ForcedProgram -Name 'Ghost App'
+        $f.KeyPath | Should -Be ''
+        Test-ProgramStillInstalled -Program $f | Should -BeFalse
+        foreach ($b in @('ab', 'Windows Update', 'Name*', 'a;b c')) { { New-ForcedProgram -Name $b } | Should -Throw }
+    }
+}
+
+Describe 'DIVuninstaller batch uninstall and Windows Apps (v0.12.0)' {
+    BeforeEach {
+        $Script:DryRun = $false
+        $Script:ExcludeFile = Join-Path $TestDrive 'ex12.json'
+        $msi = 'MsiExec.exe /I{12345678-1234-1234-1234-123456789ABC}'
+        $Script:PA = [pscustomobject]@{ Name = 'Alpha Tool'; Publisher = 'Alpha Co'; Version = '1'; InstallLocation = (Join-Path $TestDrive 'pf12\Alpha Tool'); KeyPath = 'HKEY_CURRENT_USER\Software\A'; UninstallString = $msi; Protected = $false }
+        $Script:PB = [pscustomobject]@{ Name = 'Beta Tool'; Publisher = 'Beta Co'; Version = '2'; InstallLocation = (Join-Path $TestDrive 'pf12\Beta Tool'); KeyPath = 'HKEY_CURRENT_USER\Software\B'; UninstallString = $msi; Protected = $false }
+        $Script:PP = [pscustomobject]@{ Name = 'NVIDIA Graphics Driver'; Publisher = 'N'; Version = '1'; InstallLocation = ''; KeyPath = 'K'; UninstallString = $msi; Protected = $true }
+    }
+    It 'checks the whole batch before running anything' {
+        Test-BatchProgramsReady -Programs @($Script:PA, $Script:PB) | Should -BeNullOrEmpty
+        Test-BatchProgramsReady -Programs @() | Should -Not -BeNullOrEmpty
+        Test-BatchProgramsReady -Programs @($Script:PA, $Script:PP) | Should -BeLike '*NVIDIA*'
+        { Invoke-BatchUninstall -Programs @($Script:PA, $Script:PP) } | Should -Throw
+    }
+    It 'dry run lists every program and runs none' {
+        $Script:DryRun = $true
+        $r = Invoke-BatchUninstall -Programs @($Script:PA, $Script:PB)
+        @($r.Results).Count | Should -Be 2
+        @($r.Results | Where-Object { $_.Result.Ran }).Count | Should -Be 0
+    }
+    It 'combines leftovers and quarantines one entry per program' {
+        $pf = Join-Path $TestDrive 'pf12'
+        New-Item -ItemType Directory -Path (Join-Path $pf 'Alpha Tool'), (Join-Path $pf 'Beta Tool') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $pf 'Alpha Tool\a.txt') -Value 'a'
+        Set-Content -LiteralPath (Join-Path $pf 'Beta Tool\b.txt') -Value 'b'
+        $batch = [pscustomobject]@{ RestorePoint = 'Skipped'; Results = @(
+            [pscustomobject]@{ Program = $Script:PA; Result = [pscustomobject]@{ StillInstalled = $false; BackupDir = '' }; Error = '' },
+            [pscustomobject]@{ Program = $Script:PB; Result = [pscustomobject]@{ StillInstalled = $false; BackupDir = '' }; Error = '' }) }
+        $items = @(Get-BatchLeftovers -Batch $batch -Mode 'Safe' -AllPrograms @())
+        @($items | Where-Object ProgramName).Count | Should -Be $items.Count
+        (Move-BatchLeftovers -Items $items -OtherPrograms @()).Dirs.Count | Should -Be 2
+        Test-Path -LiteralPath (Join-Path $pf 'Alpha Tool') | Should -BeFalse
+    }
+    It 'never removes protected apps and rejects wildcard package names' {
+        Test-PackageProtected -Name 'Microsoft.WindowsStore' | Should -BeTrue
+        { Remove-WindowsApps -Apps @([pscustomobject]@{ Name = 'Microsoft.WindowsStore'; Protected = $true }, [pscustomobject]@{ Name = 'Contoso.App'; Protected = $false }) } | Should -Throw
+        $r = Remove-WindowsApps -Apps @([pscustomobject]@{ Name = 'Contoso.*'; Protected = $false }) -SkipRestorePoint
+        $r.Results[0].Error | Should -BeLike '*Wildcards*'
+    }
+}
+
+Describe 'Browser extensions (v0.13.0)' {
+    BeforeEach {
+        $Script:DryRun = $false
+        $r = Join-Path $TestDrive 'ext13'
+        $ud = Join-Path $r 'Chrome\User Data'
+        $v = Join-Path $ud 'Default\Extensions\aaaabbbbccccddddeeeeffffgggghhhh\1.2_0'
+        New-Item -ItemType Directory -Path $v -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $v 'manifest.json') -Value '{"name":"Plain Ext","version":"1.2"}'
+        $Script:UD13 = $ud; $Script:R13 = $r
+    }
+    It 'lists extensions read-only and skips Temp' {
+        New-Item -ItemType Directory -Path (Join-Path $Script:UD13 'Default\Extensions\Temp') -Force | Out-Null
+        $ex = @(Get-BrowserExtensions -ChromiumRoots @(@{ Browser = 'Chrome'; Root = $Script:UD13 }) -FirefoxRoots @())
+        $ex.Count | Should -Be 1
+        $ex[0].Name | Should -Be 'Plain Ext'
+    }
+    It 'only allows an extension folder inside an Extensions folder' {
+        Test-BrowserExtensionPathAllowed -Item ([pscustomobject]@{ Kind = 'Folder'; Path = (Join-Path $Script:UD13 'Default') }) | Should -BeFalse
+        Test-BrowserExtensionPathAllowed -Item ([pscustomobject]@{ Kind = 'Folder'; Path = (Join-Path $Script:UD13 'Default\Extensions\abc') }) | Should -BeTrue
+    }
+    It 'quarantines an extension and restores it' {
+        $ex = @(Get-BrowserExtensions -ChromiumRoots @(@{ Browser = 'Chrome'; Root = $Script:UD13 }) -FirefoxRoots @())
+        $q = Join-Path $Script:R13 'q'
+        $r = Remove-BrowserExtensions -Items $ex -QuarantineRoot $q
+        $r.Moved | Should -Be 1
+        Test-Path -LiteralPath $ex[0].Path | Should -BeFalse
+        [void](Restore-Quarantine -Session (@(Get-QuarantineList -Root $q))[0])
+        Test-Path -LiteralPath $ex[0].Path | Should -BeTrue
+    }
+    It 'refuses an unsafe path without moving anything' {
+        { Remove-BrowserExtensions -Items @([pscustomobject]@{ Browser = 'Chrome'; Name = 'Bad'; Kind = 'Folder'; Path = (Join-Path $Script:UD13 'Default') }) -QuarantineRoot (Join-Path $Script:R13 'q2') } | Should -Throw
+        Test-Path -LiteralPath (Join-Path $Script:UD13 'Default') | Should -BeTrue
+    }
+}
+
+Describe 'Install monitor (v0.14.0)' {
+    BeforeEach {
+        $Script:DryRun = $false
+        $Script:TraceDir = Join-Path $TestDrive 'traces14'
+        $Script:ExcludeFile = Join-Path $TestDrive 'ex14.json'
+        $Script:P14 = Join-Path $TestDrive 'pf14'
+        New-Item -ItemType Directory -Path (Join-Path $Script:P14 'Existing') -Force | Out-Null
+    }
+    It 'keeps only top-level paths' {
+        $tl = @(Select-TopLevelPaths -Paths @('C:\a\b\c', 'C:\a', 'C:\ab'))
+        $tl.Count | Should -Be 2
+    }
+    It 'finds only what was created between two snapshots and collapses children' {
+        $args14 = @{ FolderRoots = @($Script:P14); FileRoots = @(); RegistryRoots = @(); UninstallRoots = @(); RunKeys = @() }
+        $before = Get-InstallSnapshot @args14 -SkipServices
+        New-Item -ItemType Directory -Path (Join-Path $Script:P14 'NewApp\bin') -Force | Out-Null
+        $after = Get-InstallSnapshot @args14 -SkipServices
+        $d = Compare-InstallSnapshots -Before $before -After $after
+        @($d.Items | Where-Object { $_.Path -like '*NewApp' }).Count | Should -Be 1
+        @($d.Items | Where-Object { $_.Path -like '*NewApp?bin' }).Count | Should -Be 0
+    }
+    It 'diffs registry keys, startup values and services without tracking Microsoft or Classes noise' {
+        $b = [pscustomobject]@{ Folders = @(); Files = @(); RegistryKeys = @('Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Vendor'); RunValues = @('HKCU:\x\Run|OldRun'); Services = @('Spooler') }
+        $a = [pscustomobject]@{ Folders = @(); Files = @(); RegistryKeys = @('Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Vendor', 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Vendor\Prod', 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Noise', 'Registry::HKEY_CURRENT_USER\Software\Classes\Foo'); RunValues = @('HKCU:\x\Run|OldRun', 'HKCU:\x\Run|NewRun'); Services = @('Spooler', 'NewSvc') }
+        $d = Compare-InstallSnapshots -Before $b -After $a
+        @($d.Items | Where-Object Type -eq 'RegistryKey').Count | Should -Be 1
+        @($d.Items | Where-Object Type -eq 'RunValue').Name | Should -Be 'NewRun'
+        @($d.Services) | Should -Be @('NewSvc')
+    }
+    It 'refuses a short name and finishing without starting' {
+        { Start-InstallTrace -Name 'x' } | Should -Throw
+        { Complete-InstallTrace } | Should -Throw
+    }
+    It 'only deletes a trace log inside the traces folder' {
+        { Remove-TraceLog -Dir $Script:P14 } | Should -Throw
+        Test-Path -LiteralPath $Script:P14 | Should -BeTrue
+    }
+}
+
+Describe 'Custom uninstall editor (v0.15.0)' {
+    BeforeEach {
+        $Script:DryRun = $false
+        $Script:TraceDir = Join-Path $TestDrive 'traces15'
+        New-Item -ItemType Directory -Path $Script:TraceDir -Force | Out-Null
+        $script:L15 = Join-Path $Script:TraceDir '2026-01-01-000000-One'
+        New-Item -ItemType Directory -Path $script:L15 -Force | Out-Null
+        Write-JsonFile -Path (Join-Path $script:L15 'trace.json') -Object ([ordered]@{ Name = 'One'; Items = @([ordered]@{ Type = 'Folder'; Path = 'C:\Program Files\MyApp'; Name = ''; Detail = ''; Risk = 'x' }); Services = @() })
+    }
+    It 'refuses protected and malformed items' {
+        { Add-TraceItem -Dir $script:L15 -Type Folder -Path 'C:\Windows\System32' } | Should -Throw
+        { Add-TraceItem -Dir $script:L15 -Type Folder -Path 'C:\Program Files\*' } | Should -Throw
+        { Add-TraceItem -Dir $script:L15 -Type RegistryKey -Path 'HKLM:\Software' } | Should -Throw
+    }
+    It 'adds, renames and removes items in the log only' {
+        Add-TraceItem -Dir $script:L15 -Type Folder -Path 'C:\Program Files\Other'
+        (Read-TraceData -Dir $script:L15).Items.Count | Should -Be 2
+        Set-TraceDetails -Dir $script:L15 -Name 'Renamed' -Comment 'c'
+        (Read-TraceData -Dir $script:L15).Name | Should -Be 'Renamed'
+        Remove-TraceItems -Dir $script:L15 -Items @([pscustomobject]@{ Type = 'Folder'; Path = 'C:\Program Files\Other'; Name = '' }) | Should -Be 1
+    }
+    It 'does not overwrite on export and filters hostile imports' {
+        $f = Join-Path $TestDrive 'out15.json'
+        Export-TraceLog -Dir $script:L15 -Destination $f
+        { Export-TraceLog -Dir $script:L15 -Destination $f } | Should -Throw
+        $bad = Join-Path $TestDrive 'bad15.json'
+        '{"Name":"Evil","Items":[{"Type":"Folder","Path":"C:\\Windows\\System32"},{"Type":"Folder","Path":"C:\\Program Files\\Fine"}]}' | Set-Content $bad
+        $r = Import-TraceLog -Source $bad
+        $r.Imported | Should -Be 1
+        $r.Skipped | Should -Be 1
+    }
+    It 'merges into a new log and keeps the originals' {
+        $two = Join-Path $Script:TraceDir '2026-01-01-000001-Two'
+        New-Item -ItemType Directory -Path $two -Force | Out-Null
+        Write-JsonFile -Path (Join-Path $two 'trace.json') -Object ([ordered]@{ Name = 'Two'; Items = @([ordered]@{ Type = 'Folder'; Path = 'C:\Program Files\Two'; Name = ''; Detail = ''; Risk = 'x' }); Services = @() })
+        $m = Merge-TraceLogs -Dirs @($script:L15, $two) -Name 'Merged'
+        (Read-TraceData -Dir $m).Items.Count | Should -Be 2
+        Test-Path (Join-Path $two 'trace.json') | Should -BeTrue
+    }
+}
+
+Describe 'Junk cleaner (v0.16.0)' {
+    BeforeEach {
+        $Script:DryRun = $false
+        $Script:QuarantineDir = Join-Path $TestDrive 'Quarantine16'
+        $Script:ExcludeFile = Join-Path $TestDrive 'ex16.json'
+        New-Item -ItemType Directory -Path $Script:QuarantineDir -Force | Out-Null
+        $script:T16 = Join-Path $TestDrive 'work\AppData\Local\Temp'
+        New-Item -ItemType Directory -Path $script:T16 -Force | Out-Null
+        $script:Root16 = New-JunkRoot -Path $script:T16
+        $script:Cat16 = [pscustomobject]@{ Key = 'UserTemp'; Name = 'User temp files'; Note = ''; Roots = @($script:Root16) }
+    }
+    It 'accepts junk folders only' {
+        Test-JunkRootSane -Path $script:T16 | Should -BeTrue
+        Test-JunkRootSane -Path (Join-Path $TestDrive 'work\Documents') | Should -BeFalse
+    }
+    It 'lists old items and keeps recent ones' {
+        $old = Join-Path $script:T16 'old.txt'; 'x' | Set-Content $old; (Get-Item $old).LastWriteTime = (Get-Date).AddDays(-3)
+        'y' | Set-Content (Join-Path $script:T16 'new.txt')
+        $u = Get-JunkUnits -Category $script:Cat16
+        @($u.Units).Name | Should -Be @('old.txt')
+        $u.RecentSkipped | Should -Be 1
+    }
+    It 'moves to quarantine, restores, and refuses items outside the root' {
+        $old = Join-Path $script:T16 'old.txt'; 'x' | Set-Content $old; (Get-Item $old).LastWriteTime = (Get-Date).AddDays(-3)
+        $u = Get-JunkUnits -Category $script:Cat16
+        $r = Move-JunkToQuarantine -Category $script:Cat16 -Units $u.Units
+        $r.Moved | Should -Be 1
+        Test-Path $old | Should -BeFalse
+        [void](Restore-Quarantine -Session (@(Get-QuarantineList)[0]))
+        Test-Path $old | Should -BeTrue
+        $bad = [pscustomobject]@{ Category = 'UserTemp'; Type = 'File'; Path = (Join-Path $TestDrive 'elsewhere.txt'); Name = 'e'; Bytes = 1; Files = 1; Newest = (Get-Date).AddDays(-3); Root = $script:Root16 }
+        (Move-JunkToQuarantine -Category $script:Cat16 -Units @($bad)).Moved | Should -Be 0
+    }
+}
+

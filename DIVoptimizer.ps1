@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 # ================================================================
-# DIVoptimizer v0.8.0
+# DIVoptimizer v0.16.0
 # Author  : Kaz
 #
 # A transparent, hardware-aware, reversible Windows optimization and
@@ -50,7 +50,7 @@ if ($Script:RemoteRun) {
 }
 
 $Script:AppName       = 'DIVoptimizer'
-$Script:Version       = '0.8.0'
+$Script:Version       = '0.16.0'
 $Script:Author        = 'Kaz'
 $Script:SchemaVersion = 2
 $Script:Width         = 78
@@ -1106,10 +1106,34 @@ function Test-RegistryValueEquals {
     }
 }
 
+function Write-Command {
+    # Shows the exact command about to run, in the PowerShell window, so nothing happens out of sight.
+    param([string]$Text)
+    if ($Script:DryRun) { return }
+    if (-not $Script:CommandLegendShown) {
+        $Script:CommandLegendShown = $true
+        Write-Host '  PS> lines are the exact commands DIVoptimizer runs on your PC.' -ForegroundColor DarkGray
+    }
+    Write-Host ('  PS> ' + $Text) -ForegroundColor DarkCyan
+    Write-Log -Level INFO -Action 'COMMAND' -Message $Text
+}
+
+function Format-RegCommandValue {
+    param([string]$Type, $Value)
+    switch ($Type) {
+        'Binary'      { return ('[binary, {0} bytes]' -f @($Value).Count) }
+        'MultiString' { return ("'" + ((@($Value) -join "','")) + "'") }
+        'DWord'       { return [string][int]$Value }
+        'QWord'       { return [string][long]$Value }
+        default       { return ("'" + ([string]$Value -replace "'", "''") + "'") }
+    }
+}
+
 function Set-RegistryValueSafe {
     # The ONLY function that writes a registry value. Honors dry-run.
     param([string]$Path, [string]$Name, [string]$Type, $Value)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would set $Path\$Name"; return $true }
+    Write-Command ("Set-ItemProperty -Path '{0}' -Name '{1}' -Value {2}   # {3}" -f $Path, $Name, (Format-RegCommandValue -Type $Type -Value $Value), $Type)
     if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force -ErrorAction Stop | Out-Null }
     New-ItemProperty -LiteralPath $Path -Name $Name -PropertyType $Type -Value $Value -Force -ErrorAction Stop | Out-Null
     return $true
@@ -1118,6 +1142,7 @@ function Set-RegistryValueSafe {
 function Remove-RegistryValueSafe {
     param([string]$Path, [string]$Name)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would remove $Path\$Name"; return $true }
+    Write-Command ("Remove-ItemProperty -Path '{0}' -Name '{1}'" -f $Path, $Name)
     Remove-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop
     return $true
 }
@@ -1207,6 +1232,7 @@ function Set-ServiceStartMode {
     param([string]$Name, [string]$Mode)
     if ($Mode -notin @('auto', 'delayed-auto', 'demand', 'disabled')) { throw "Unsupported start mode '$Mode'" }
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would set service $Name start= $Mode"; return $true }
+    Write-Command ('sc.exe config {0} start= {1}' -f $Name, $Mode)
     $out = & sc.exe config $Name start= $Mode 2>&1
     if ($LASTEXITCODE -ne 0) { throw ("sc.exe failed (exit {0}): {1}" -f $LASTEXITCODE, (($out | Out-String).Trim())) }
     return $true
@@ -1215,12 +1241,14 @@ function Set-ServiceStartMode {
 function Stop-ServiceSafe {
     param([string]$Name)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would stop service $Name"; return }
+    Write-Command ('Stop-Service -Name {0} -Force' -f $Name)
     Stop-Service -Name $Name -Force -ErrorAction Stop
 }
 
 function Start-ServiceSafe {
     param([string]$Name)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would start service $Name"; return }
+    Write-Command ('Start-Service -Name {0}' -f $Name)
     Start-Service -Name $Name -ErrorAction Stop
 }
 
@@ -1286,6 +1314,7 @@ function Set-TaskEnabledSafe {
     param([string]$TaskPath, [string]$TaskName, [bool]$Enabled)
     $tp = ConvertTo-TaskPath -Path $TaskPath
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would set task $tp$TaskName enabled=$Enabled"; return $true }
+    Write-Command ('{0}-ScheduledTask -TaskPath ''{1}'' -TaskName ''{2}''' -f $(if ($Enabled) { 'Enable' } else { 'Disable' }), $tp, $TaskName)
     if ($Enabled) { Enable-ScheduledTask -TaskPath $tp -TaskName $TaskName -ErrorAction Stop | Out-Null }
     else { Disable-ScheduledTask -TaskPath $tp -TaskName $TaskName -ErrorAction Stop | Out-Null }
     return $true
@@ -1344,6 +1373,7 @@ function Get-PowerPlans {
 function Set-ActivePowerPlan {
     param([string]$Guid)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would activate power plan $Guid"; return $true }
+    Write-Command ('powercfg.exe /setactive {0}' -f $Guid)
     $out = & powercfg.exe /setactive $Guid 2>&1
     if ($LASTEXITCODE -ne 0) { throw ("powercfg /setactive failed: " + (($out | Out-String).Trim())) }
     $now = Get-ActivePowerPlan
@@ -1354,6 +1384,7 @@ function Set-ActivePowerPlan {
 function Remove-PowerPlanSafe {
     param([string]$Guid)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would delete power plan $Guid"; return }
+    Write-Command ('powercfg.exe /delete {0}' -f $Guid)
     $out = & powercfg.exe /delete $Guid 2>&1
     if ($LASTEXITCODE -ne 0) { throw ("powercfg /delete failed: " + (($out | Out-String).Trim())) }
 }
@@ -1394,6 +1425,7 @@ function Set-HibernationState {
     param([bool]$Enabled)
     $arg = if ($Enabled) { 'on' } else { 'off' }
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would run powercfg /hibernate $arg"; return $true }
+    Write-Command ('powercfg.exe /hibernate {0}' -f $arg)
     $out = & powercfg.exe /hibernate $arg 2>&1
     if ($LASTEXITCODE -ne 0) { throw ("powercfg /hibernate $arg failed: " + (($out | Out-String).Trim())) }
     return $true
@@ -2462,11 +2494,13 @@ function Invoke-CleanupTarget {
     if ($t.Admin -and -not (Test-Administrator)) { throw "$($t.Name) requires Administrator." }
     if ($Key -eq 'RecycleBin') {
         $before = Get-RecycleBinStats
+        Write-Command 'Clear-RecycleBin -Force'
         Clear-RecycleBin -Force -ErrorAction Stop
         return [pscustomobject]@{ Freed = $before.Bytes; Removed = $before.Files; Skipped = 0 }
     }
     if ($Key -eq 'DeliveryOpt' -and (Get-Command Delete-DeliveryOptimizationCache -ErrorAction SilentlyContinue)) {
         $before = Get-FolderStats -Path $t.Path
+        Write-Command 'Delete-DeliveryOptimizationCache -Force'
         Delete-DeliveryOptimizationCache -Force -ErrorAction Stop
         $after = Get-FolderStats -Path $t.Path
         return [pscustomobject]@{ Freed = [math]::Max(0, $before.Bytes - $after.Bytes); Removed = [math]::Max(0, $before.Files - $after.Files); Skipped = $after.Files }
@@ -2478,6 +2512,7 @@ function Invoke-CleanupTarget {
         $wuWasRunning = ($wu.Status -eq 'Running')
         if ($wuWasRunning) { Stop-ServiceSafe -Name 'wuauserv' }
     }
+    Write-Command ("Remove-Item -Path '{0}\{1}' -Recurse -Force   # files in use are skipped" -f $t.Path, $(if ($t.Filter) { $t.Filter } else { '*' }))
     $removed = 0
     $skipped = 0
     $freed = [long]0
@@ -2525,17 +2560,18 @@ function Invoke-WorkingSetTrim {
 }
 
 function Remove-AppPackageExact {
-    param([string]$Name)
+    param([string]$Name, [switch]$CurrentUserOnly)
     if ($Name -match '[\*\?\[\]]') { throw "Wildcards are not allowed in package names ('$Name')." }
     if (Test-PackageProtected -Name $Name) { throw "$Name is a protected package and will not be removed." }
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would remove package $Name"; return 0 }
-    $admin = Test-Administrator
+    $admin = ((Test-Administrator) -and -not $CurrentUserOnly)
     $pk = @()
     if ($admin) { $pk = @(Get-AppxPackage -Name $Name -AllUsers -ErrorAction Stop | Where-Object { $_.Name -eq $Name }) }
     else { $pk = @(Get-AppxPackage -Name $Name -ErrorAction Stop | Where-Object { $_.Name -eq $Name }) }
     $count = 0
     foreach ($p in $pk) {
         if ($p.IsFramework -or $p.NonRemovable) { Write-Tag SKIP "$($p.Name) is a framework or non-removable package"; continue }
+        Write-Command ('Remove-AppxPackage -Package {0}{1}' -f $p.PackageFullName, $(if ($admin) { ' -AllUsers' } else { '' }))
         if ($admin) { Remove-AppxPackage -Package $p.PackageFullName -AllUsers -ErrorAction Stop } else { Remove-AppxPackage -Package $p.PackageFullName -ErrorAction Stop }
         $count++
     }
@@ -4148,6 +4184,8 @@ function Show-MainMenu {
         @{ Kind = 'I'; Key = '17'; Text = 'Export Report' },
         @{ Kind = 'I'; Key = '18'; Text = 'Check for Updates' },
         @{ Kind = 'I'; Key = '19'; Text = 'About' },
+        @{ Kind = 'I'; Key = '20'; Text = 'DIVuninstaller' },
+        @{ Kind = 'I'; Key = '21'; Text = 'Junk Cleaner' },
         @{ Kind = 'I'; Key = '0'; Text = 'Exit' }
     )
     $colW = [int](($Script:Width - 2) / 2)
@@ -4192,6 +4230,8 @@ function Show-MainMenu {
                 '17' { Invoke-ExportPage }
                 '18' { Invoke-UpdatePage }
                 '19' { Show-AboutPage }
+                '20' { Invoke-UninstallerPage }
+                '21' { Invoke-JunkPage }
                 '0'  { return }
                 default { Write-Tag WARN 'Invalid choice'; Start-Sleep -Seconds 1 }
             }
@@ -5025,6 +5065,3206 @@ function New-GuiNavButton {
     return (New-GuiButton -Text $Text -Width 200 -OnClick $OnClick -Bg $Bg)
 }
 
+# ---------------------------------------------------------------
+# DIVuninstaller: uninstall a program, then find and quarantine what it leaves behind.
+# Rules: the program's OWN uninstaller does the uninstall; leftovers are matched by exact name only;
+# nothing is pre-selected; folders are MOVED to a quarantine folder (not deleted) and registry keys are
+# exported first, so every cleanup can be undone until the quarantine is emptied.
+# ---------------------------------------------------------------
+
+$Script:QuarantineDir   = Join-Path $Script:DataRoot 'Quarantine'
+$Script:UninstalledDir  = Join-Path $Script:DataRoot 'Uninstalled'
+$Script:ExcludeFile     = Join-Path $Script:DataRoot 'uninstaller-exclude.json'
+$Script:UninstallerSettingsFile = Join-Path $Script:DataRoot 'uninstaller-settings.json'
+
+$Script:UninstallKeyRoots = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+    'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+)
+
+# Programs this tool will not uninstall (system, runtimes, drivers, security). Use Windows Settings > Apps for those.
+$Script:ProtectedProgramPatterns = @(
+    '^Microsoft Visual C\+\+', '^Microsoft \.NET', '^Microsoft Windows', '^Windows ', '^Microsoft Edge', '^Microsoft Update Health',
+    'WebView2', '^Microsoft GameInput', '^Microsoft Store', 'DirectX', 'Defender', 'Security Health',
+    'Driver', 'Chipset', 'Management Engine', '^NVIDIA (Graphics|HD Audio|PhysX|Control)', '^Realtek', '^AMD (Software|Chipset|Radeon)', '^Intel\(R\)',
+    '^(KB\d+|Update for |Security Update|Hotfix)'
+)
+
+# Folder and registry names that are never offered as leftovers, whatever the program is called.
+$Script:ProtectedLeafNames = @(
+    'microsoft', 'windows', 'windows nt', 'windowsapps', 'common files', 'microsoft shared', 'packages', 'temp', 'programs',
+    'classes', 'policies', 'system32', 'syswow64', 'drivers', 'program files', 'program files (x86)', 'programdata', 'users', 'appdata',
+    'local', 'locallow', 'roaming', 'software', 'wow6432node', 'run', 'currentversion', 'uninstall', 'internet explorer', 'windows defender'
+)
+
+function Test-ProgramProtected {
+    param([string]$Name, [string]$Publisher = '')
+    foreach ($pat in $Script:ProtectedProgramPatterns) { if ($Name -match $pat) { return $true } }
+    return $false
+}
+
+function ConvertTo-RegExePath {
+    # HKCU:\Software\X  ->  HKCU\Software\X   (the form reg.exe expects)
+    param([string]$Path)
+    $p = $Path -replace '^Microsoft\.PowerShell\.Core\\Registry::', '' -replace '^Registry::', ''
+    $p = $p -replace '^HKEY_LOCAL_MACHINE', 'HKLM' -replace '^HKEY_CURRENT_USER', 'HKCU'
+    $p = $p -replace '^(HKLM|HKCU):', '$1'
+    return $p
+}
+
+function ConvertTo-SafeFileName {
+    param([string]$Text)
+    $t = ($Text -replace '[^A-Za-z0-9_\-\.]+', '_').Trim('_')
+    if ($t.Length -gt 40) { $t = $t.Substring(0, 40) }
+    if (-not $t) { $t = 'item' }
+    return $t
+}
+
+function Get-InstalledPrograms {
+    param([string[]]$Keys = $Script:UninstallKeyRoots)
+    $list = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    foreach ($root in $Keys) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($k in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
+            try {
+                $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction Stop
+                $name = [string]$p.DisplayName
+                if (-not $name) { continue }
+                if ($p.SystemComponent -eq 1) { continue }
+                if ($p.ParentKeyName -or $p.ParentDisplayName) { continue }
+                $uninst = [string]$p.UninstallString
+                $quiet = [string]$p.QuietUninstallString
+                if (-not $uninst -and -not $quiet) { continue }
+                $ver = [string]$p.DisplayVersion
+                $dedupe = ($name + '|' + $ver).ToLower()
+                if ($seen.ContainsKey($dedupe)) { continue }
+                $seen[$dedupe] = $true
+                $pub = [string]$p.Publisher
+                $size = [long]0
+                if ($p.EstimatedSize) { $size = [long]$p.EstimatedSize }
+                $loc = ([string]$p.InstallLocation).Trim().Trim('"')
+                $list.Add([pscustomobject]@{
+                    Name = $name; Publisher = $pub; Version = $ver; InstallDate = [string]$p.InstallDate
+                    InstallLocation = $loc; UninstallString = $uninst; QuietUninstallString = $quiet
+                    SizeKB = $size; KeyName = [string]$k.PSChildName; KeyPath = [string]$k.Name
+                    Scope = $(if ($k.Name -like 'HKEY_CURRENT_USER*') { 'User' } else { 'Machine' })
+                    Protected = (Test-ProgramProtected -Name $name -Publisher $pub)
+                })
+            } catch {
+                Write-Log -Level WARN -Action 'PROGRAM_LIST' -Target ([string]$k.Name) -ErrorText $_.Exception.Message
+            }
+        }
+    }
+    return @($list.ToArray() | Sort-Object -Property Name)
+}
+
+function Split-UninstallCommand {
+    # Turns an UninstallString into a file and arguments. Returns $null when it cannot be done safely.
+    param([string]$Text)
+    $t = ([string]$Text).Trim()
+    if (-not $t) { return $null }
+    $file = ''
+    $argText = ''
+    if ($t.StartsWith('"')) {
+        $end = $t.IndexOf('"', 1)
+        if ($end -lt 2) { return $null }
+        $file = $t.Substring(1, $end - 1)
+        $argText = $t.Substring($end + 1).Trim()
+    } elseif ($t -match '^(?i)msiexec(\.exe)?(\s+(.*))?$') {
+        $file = 'msiexec.exe'
+        $argText = [string]$Matches[3]
+    } elseif ($t -match '^(?i)(.+?\.(exe|bat|cmd|com))(\s+(.*))?$') {
+        $file = [string]$Matches[1]
+        $argText = [string]$Matches[4]
+    } else { return $null }
+    if ($file -match '[\*\?\|<>]') { return $null }
+    $isMsi = ($file -match '(?i)(^|[\\/])msiexec(\.exe)?$')
+    if ($isMsi) {
+        # Always ask Windows Installer to UNINSTALL the product code, even if the string says /I.
+        $guid = ''
+        if ($argText -match '(\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\})') { $guid = [string]$Matches[1] }
+        if (-not $guid) { return $null }
+        return [pscustomobject]@{ File = 'msiexec.exe'; Arguments = ('/x ' + $guid); IsMsi = $true }
+    }
+    if ($file -notmatch '^([A-Za-z]:[\\/]|\\\\)') { return $null }
+    return [pscustomobject]@{ File = $file; Arguments = $argText; IsMsi = $false }
+}
+
+function Test-ProgramStillInstalled {
+    param($Program)
+    if (-not $Program.KeyPath) { return $false }
+    return (Test-Path -LiteralPath ('Registry::' + $Program.KeyPath))
+}
+
+function Format-ProgramInstallDate {
+    param([string]$Raw)
+    if ($Raw -match '^(\d{4})(\d{2})(\d{2})$') { return ('{0}-{1}-{2}' -f $Matches[1], $Matches[2], $Matches[3]) }
+    if ($Raw) { return $Raw }
+    return 'unknown'
+}
+
+function Get-ProgramDetailsText {
+    param($Program)
+    if (-not $Program) { return '' }
+    $sz = 'unknown'
+    if ($Program.SizeKB -gt 0) { $sz = Format-Bytes ([double]$Program.SizeKB * 1024) }
+    $loc = $Program.InstallLocation
+    if (-not $loc) { $loc = 'not recorded' }
+    $prot = ''
+    if ($Program.Protected) { $prot = "`nProtected: cannot be uninstalled here (system, runtime, driver or security software)." }
+    return ("{0}  {1}`nPublisher: {2}    Installed: {3}    Size: {4}`nLocation: {5}`nUninstall entry: {6}{7}" -f $Program.Name, $Program.Version, $(if ($Program.Publisher) { $Program.Publisher } else { 'unknown' }), (Format-ProgramInstallDate -Raw $Program.InstallDate), $sz, $loc, $Program.KeyPath, $prot)
+}
+
+function Get-ScanModeDescription {
+    param([string]$Mode)
+    switch ($Mode) {
+        'None'     { return "Built-in: runs the program's own uninstaller only. No leftover scan." }
+        'Safe'     { return 'Safe: the install folder, plus folders and registry keys with the program''s exact name under Program Files, ProgramData and Software.' }
+        'Advanced' { return 'Advanced: everything in Moderate, plus Start Menu and Desktop shortcuts, App Paths entries, the program''s own uninstall entry, and an empty publisher folder.' }
+        default    { return 'Moderate: everything in Safe, plus AppData folders and startup entries that point into the install folder.' }
+    }
+}
+
+function Update-UninstallRecord {
+    # Adds the outcome (mode, exit code, leftovers) to the record written when the uninstall started.
+    param([string]$Dir, [hashtable]$Values)
+    if ($Script:DryRun -or -not $Dir) { return }
+    $path = Join-Path $Dir 'program.json'
+    try {
+        $o = [ordered]@{}
+        if (Test-Path -LiteralPath $path) {
+            $cur = Read-JsonFile -Path $path
+            foreach ($pr in $cur.PSObject.Properties) { $o[$pr.Name] = $pr.Value }
+        }
+        foreach ($k in $Values.Keys) { $o[$k] = $Values[$k] }
+        Write-JsonFile -Path $path -Object $o
+    } catch { Write-Log -Level WARN -Action 'UNINSTALL_RECORD' -Target $Dir -ErrorText $_.Exception.Message }
+}
+
+function Get-UninstallHistory {
+    param([string]$Root = $Script:UninstalledDir)
+    $out = @()
+    if (-not (Test-Path -LiteralPath $Root)) { return @() }
+    foreach ($d in @(Get-ChildItem -LiteralPath $Root -Directory -ErrorAction SilentlyContinue)) {
+        $pj = Join-Path $d.FullName 'program.json'
+        if (-not (Test-Path -LiteralPath $pj)) { continue }
+        try {
+            $r = Read-JsonFile -Path $pj
+            $out += [pscustomobject]@{
+                Id = $d.Name; Path = $d.FullName; Name = [string]$r.Name; Version = [string]$r.Version; Started = [string]$r.Started
+                Mode = [string]$r.Mode; ExitCode = [string]$r.ExitCode; Forced = [bool]$r.Forced
+                LeftoversFound = [string]$r.LeftoversFound; LeftoversMoved = [string]$r.LeftoversMoved; Quarantine = [string]$r.Quarantine
+            }
+        } catch { Write-Log -Level WARN -Action 'UNINSTALL_HISTORY' -Target $d.FullName -ErrorText $_.Exception.Message }
+    }
+    return @($out | Sort-Object Id -Descending)
+}
+
+function Invoke-ProgramUninstall {
+    # Runs the program's own uninstaller after a restore point and a backup of its uninstall key.
+    # -SkipUninstaller is the FORCED mode: nothing is run, the caller scans for what is left (broken or missing uninstaller).
+    param($Program, [switch]$SkipRestorePoint, [switch]$SkipUninstaller)
+    if ($Program.Protected) { throw "$($Program.Name) is a protected program. Use Windows Settings > Apps if you really want to remove it." }
+    $cmd = $null
+    if (-not $SkipUninstaller) {
+        $cmd = Split-UninstallCommand -Text $Program.UninstallString
+        if (-not $cmd) { throw "The uninstall command for $($Program.Name) could not be read safely, so it was not run." }
+        if (-not $cmd.IsMsi -and -not (Test-Path -LiteralPath $cmd.File)) { throw "The uninstaller was not found: $($cmd.File). If it is missing, use Forced uninstall." }
+    }
+    if ($Script:DryRun) {
+        if ($cmd) { Write-Tag INFO ("[DRY RUN] would run: {0} {1}" -f $cmd.File, $cmd.Arguments) } else { Write-Tag INFO ("[DRY RUN] would run a forced removal scan for {0} (no uninstaller)" -f $Program.Name) }
+        return [pscustomobject]@{ Ran = $false; ExitCode = $null; BackupDir = ''; RestorePoint = 'Skipped'; StillInstalled = $true; Forced = [bool]$SkipUninstaller }
+    }
+    $stamp = Get-Date -Format 'yyyy-MM-dd-HHmmss'
+    $dir = Join-Path $Script:UninstalledDir ('{0}-{1}' -f $stamp, (ConvertTo-SafeFileName -Text $Program.Name))
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $rp = 'Skipped'
+    if (-not $SkipRestorePoint) {
+        $r = New-DivRestorePoint -Description ('DIVuninstaller - ' + $Program.Name)
+        $rp = $r.Status
+        if ($r.Message) { Write-Tag WARN ('Restore point: ' + $r.Message) }
+    }
+    $regFile = Join-Path $dir 'uninstall-key.reg'
+    if ($Program.KeyPath) {
+        $regPath = ConvertTo-RegExePath -Path $Program.KeyPath
+        Write-Command ('reg.exe export "{0}" "{1}" /y' -f $regPath, $regFile)
+        $out = & reg.exe export $regPath $regFile /y 2>&1
+        if ($LASTEXITCODE -ne 0) { Write-Tag WARN ('Could not back up the program entry: ' + (($out | Out-String).Trim())) }
+    } else {
+        Write-Tag INFO 'This program has no uninstall entry, so there is no registry entry to back up.'
+    }
+    if ((Get-UninstallerSettings).ForceStopExecutables) {
+        $stopped = Stop-ProgramProcesses -Program $Program
+        if ($stopped -gt 0) { Write-Tag INFO ("Stopped {0} running program(s) from the install folder." -f $stopped) }
+    }
+    Write-JsonFile -Path (Join-Path $dir 'program.json') -Object ([ordered]@{
+        Name = $Program.Name; Publisher = $Program.Publisher; Version = $Program.Version; InstallLocation = $Program.InstallLocation
+        UninstallString = $Program.UninstallString; KeyPath = $Program.KeyPath; Started = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        Forced = [bool]$SkipUninstaller; RestorePoint = $rp
+    })
+    if ($SkipUninstaller) {
+        Write-Log -Level INFO -Action 'FORCED_UNINSTALL' -Target $Program.Name -Message 'uninstaller skipped; leftover scan only'
+        Write-Tag INFO 'Forced uninstall: the program''s own uninstaller is NOT run.'
+        return [pscustomobject]@{ Ran = $false; ExitCode = $null; BackupDir = $dir; RestorePoint = $rp; StillInstalled = (Test-ProgramStillInstalled -Program $Program); Forced = $true }
+    }
+    Write-Log -Level INFO -Action 'UNINSTALL_START' -Target $Program.Name -Message ($cmd.File + ' ' + $cmd.Arguments)
+    $splat = @{ FilePath = $cmd.File; Wait = $true; PassThru = $true; ErrorAction = 'Stop' }
+    if ($cmd.Arguments) { $splat['ArgumentList'] = $cmd.Arguments }
+    Write-Command ("Start-Process -FilePath '{0}'{1} -Wait" -f $cmd.File, $(if ($cmd.Arguments) { " -ArgumentList '" + $cmd.Arguments + "'" } else { '' }))
+    $proc = Start-Process @splat
+    $code = $proc.ExitCode
+    $still = Test-ProgramStillInstalled -Program $Program
+    Write-Log -Level $(if ($still) { 'WARN' } else { 'INFO' }) -Action 'UNINSTALL_DONE' -Target $Program.Name -Result ([string]$code) -Message $(if ($still) { 'still listed as installed' } else { 'no longer listed' })
+    Update-UninstallRecord -Dir $dir -Values @{ ExitCode = $code }
+    return [pscustomobject]@{ Ran = $true; ExitCode = $code; BackupDir = $dir; RestorePoint = $rp; StillInstalled = $still; Forced = $false }
+}
+
+function Get-DefaultFolderRoots {
+    $r = @()
+    $cands = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData)
+    if ($env:LOCALAPPDATA) { $cands += $env:LOCALAPPDATA; $cands += (Join-Path $env:LOCALAPPDATA 'Programs') }
+    if ($env:APPDATA) { $cands += $env:APPDATA }
+    foreach ($x in $cands) { if ($x -and ($r -notcontains $x)) { $r += $x } }
+    return @($r)
+}
+
+function Get-DefaultShortcutRoots {
+    $r = @()
+    foreach ($sf in @('CommonPrograms', 'Programs', 'CommonDesktopDirectory', 'DesktopDirectory')) {
+        try { $p = [Environment]::GetFolderPath($sf); if ($p -and ($r -notcontains $p)) { $r += $p } } catch { }
+    }
+    return @($r)
+}
+
+function Test-FolderHasNoFiles {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $false }
+    return (@(Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue).Count -eq 0)
+}
+
+function Get-ProgramLeftovers {
+    # Exact-name matches only. Returns candidate items; the caller decides what to move. Nothing is changed here.
+    # Mode: Safe < Moderate < Advanced (each includes the one before it).
+    param(
+        $Program,
+        $OtherPrograms = @(),
+        [ValidateSet('Safe', 'Moderate', 'Advanced')][string]$Mode = 'Moderate',
+        [string[]]$FolderRoots = $null,
+        [string[]]$SafeFolderRoots = $null,
+        [string[]]$RegistryRoots = @('HKCU:\Software', 'HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\WOW6432Node'),
+        [string[]]$RunKeys = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run', 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'),
+        [string[]]$ShortcutRoots = $null,
+        [string[]]$AppPathsKeys = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths', 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths')
+    )
+    if ($null -eq $FolderRoots) { $FolderRoots = Get-DefaultFolderRoots }
+    if ($null -eq $SafeFolderRoots) {
+        $SafeFolderRoots = @($FolderRoots | Where-Object {
+            ((-not $env:APPDATA) -or ($_ -notlike ($env:APPDATA + '*'))) -and ((-not $env:LOCALAPPDATA) -or ($_ -notlike ($env:LOCALAPPDATA + '*')))
+        })
+    }
+    if ($null -eq $ShortcutRoots) { $ShortcutRoots = Get-DefaultShortcutRoots }
+    $useRoots = $SafeFolderRoots
+    if ($Mode -ne 'Safe') { $useRoots = $FolderRoots }
+
+    $items = New-Object System.Collections.Generic.List[object]
+    $seenPaths = @{}
+    $names = @(Get-LeftoverNames -Program $Program)
+
+    $add = {
+        param($Type, $Path, $Name, $Detail, $Bytes, $Risk)
+        $key = ($Type + '|' + $Path + '|' + $Name).ToLower()
+        if ($seenPaths.ContainsKey($key)) { return }
+        $seenPaths[$key] = $true
+        $items.Add([pscustomobject]@{ Type = $Type; Path = $Path; Name = $Name; Detail = $Detail; SizeBytes = [long]$Bytes; Risk = $Risk })
+    }
+
+    # 1. The recorded install folder, if it is still there.
+    if ($Program.InstallLocation -and (Test-Path -LiteralPath $Program.InstallLocation -PathType Container) -and (Test-LeftoverPathAllowed -Path $Program.InstallLocation -OtherPrograms $OtherPrograms)) {
+        $st = Get-FolderStats -Path $Program.InstallLocation
+        & $add 'Folder' $Program.InstallLocation '' 'Install folder' $st.Bytes 'CHECK'
+    }
+    # 2. Folders named exactly like the program under the usual places.
+    foreach ($root in $useRoots) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($n in $names) {
+            $cand = Join-Path $root $n
+            if ((Test-Path -LiteralPath $cand -PathType Container) -and (Test-LeftoverPathAllowed -Path $cand -OtherPrograms $OtherPrograms)) {
+                $st = Get-FolderStats -Path $cand
+                & $add 'Folder' $cand '' ('Folder under ' + $root) $st.Bytes 'LOW'
+            }
+            if ($Program.Publisher) {
+                $cand2 = Join-Path (Join-Path $root $Program.Publisher) $n
+                if ((Test-Path -LiteralPath $cand2 -PathType Container) -and (Test-LeftoverPathAllowed -Path $cand2 -OtherPrograms $OtherPrograms)) {
+                    $st = Get-FolderStats -Path $cand2
+                    & $add 'Folder' $cand2 '' ('Folder under ' + $root) $st.Bytes 'LOW'
+                }
+            }
+        }
+    }
+    # 3. Registry keys named exactly like the program (or Publisher\Program).
+    foreach ($root in $RegistryRoots) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($n in $names) {
+            $cand = Join-Path $root $n
+            if (Test-Path -LiteralPath $cand) {
+                $risk = 'CHECK'; if ($root -like 'HKCU*') { $risk = 'LOW' }
+                & $add 'RegistryKey' $cand '' ('Settings key under ' + $root) 0 $risk
+            }
+            if ($Program.Publisher) {
+                $cand2 = Join-Path (Join-Path $root $Program.Publisher) $n
+                if (Test-Path -LiteralPath $cand2) {
+                    $risk = 'CHECK'; if ($root -like 'HKCU*') { $risk = 'LOW' }
+                    & $add 'RegistryKey' $cand2 '' ('Settings key under ' + $root) 0 $risk
+                }
+            }
+        }
+    }
+    # 4. Moderate and Advanced: startup (Run) entries that point into the install folder.
+    if ($Mode -ne 'Safe' -and $Program.InstallLocation -and $Program.InstallLocation.Length -ge 6) {
+        foreach ($rk in $RunKeys) {
+            if (-not (Test-Path -LiteralPath $rk)) { continue }
+            $props = Get-ItemProperty -LiteralPath $rk -ErrorAction SilentlyContinue
+            if (-not $props) { continue }
+            foreach ($pr in @($props.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
+                if (([string]$pr.Value).IndexOf($Program.InstallLocation, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    & $add 'RunValue' $rk $pr.Name ('Starts with Windows: ' + [string]$pr.Value) 0 'LOW'
+                }
+            }
+        }
+    }
+    # 5. Advanced only.
+    if ($Mode -eq 'Advanced') {
+        # Start Menu / Desktop: a folder named exactly like the program, or a shortcut named like it or pointing into the install folder.
+        foreach ($sr in $ShortcutRoots) {
+            if (-not (Test-Path -LiteralPath $sr)) { continue }
+            foreach ($n in $names) {
+                $folder = Join-Path $sr $n
+                if ((Test-Path -LiteralPath $folder -PathType Container) -and (Test-LeftoverPathAllowed -Path $folder -OtherPrograms $OtherPrograms)) {
+                    & $add 'Folder' $folder '' 'Start Menu folder' 0 'LOW'
+                }
+                $lnk = Join-Path $sr ($n + '.lnk')
+                if (Test-Path -LiteralPath $lnk -PathType Leaf) { & $add 'File' $lnk '' 'Shortcut' 0 'LOW' }
+            }
+            if ($Program.InstallLocation -and $Program.InstallLocation.Length -ge 6) {
+                $sh = $null
+                try { $sh = New-Object -ComObject WScript.Shell } catch { $sh = $null }
+                if ($sh) {
+                    foreach ($f in @(Get-ChildItem -LiteralPath $sr -Filter '*.lnk' -File -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 3000)) {
+                        try {
+                            $target = [string]$sh.CreateShortcut($f.FullName).TargetPath
+                            if ($target -and $target.StartsWith($Program.InstallLocation, [System.StringComparison]::OrdinalIgnoreCase)) {
+                                & $add 'File' $f.FullName '' ('Shortcut to ' + $target) 0 'LOW'
+                            }
+                        } catch { }
+                    }
+                }
+            }
+        }
+        # App Paths entries that point into the install folder.
+        if ($Program.InstallLocation -and $Program.InstallLocation.Length -ge 6) {
+            foreach ($ak in $AppPathsKeys) {
+                if (-not (Test-Path -LiteralPath $ak)) { continue }
+                foreach ($c in @(Get-ChildItem -LiteralPath $ak -ErrorAction SilentlyContinue)) {
+                    try {
+                        $pp = Get-ItemProperty -LiteralPath $c.PSPath -ErrorAction Stop
+                        $def = [string]$pp.'(default)'
+                        $pth = [string]$pp.Path
+                        if (($def -and $def.IndexOf($Program.InstallLocation, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) -or ($pth -and $pth.IndexOf($Program.InstallLocation, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)) {
+                            & $add 'RegistryKey' ('Registry::' + $c.Name) '' 'App Paths entry' 0 'CHECK'
+                        }
+                    } catch { }
+                }
+            }
+        }
+        # The program's own uninstall entry, if it is still registered (broken uninstaller / forced removal).
+        if ($Program.KeyPath -and (Test-Path -LiteralPath ('Registry::' + $Program.KeyPath))) {
+            & $add 'RegistryKey' ('Registry::' + $Program.KeyPath) '' 'The program''s own uninstall entry' 0 'CHECK'
+        }
+        # Publisher folder, only when nothing is left in it once the items above are gone.
+        if ($Program.Publisher) {
+            foreach ($root in $useRoots) {
+                $pub = Join-Path $root $Program.Publisher
+                if (-not (Test-Path -LiteralPath $pub -PathType Container)) { continue }
+                if (-not (Test-LeftoverPathAllowed -Path $pub -OtherPrograms $OtherPrograms)) { continue }
+                $inside = @($items.ToArray() | Where-Object { $_.Type -eq 'Folder' -and $_.Path.StartsWith($pub, [System.StringComparison]::OrdinalIgnoreCase) }).Count
+                $files = @(Get-ChildItem -LiteralPath $pub -Recurse -File -Force -ErrorAction SilentlyContinue)
+                $outside = @($files | Where-Object {
+                    $fp = $_.FullName
+                    @($items.ToArray() | Where-Object { $_.Type -eq 'Folder' -and $fp.StartsWith($_.Path + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase) }).Count -eq 0
+                }).Count
+                if ($outside -eq 0 -and ($inside -gt 0 -or $files.Count -eq 0)) {
+                    & $add 'EmptyFolder' $pub '' 'Publisher folder (only removed if it is empty by then)' 0 'LOW'
+                }
+            }
+        }
+    }
+    return @(Add-LeftoverStatus -Items @($items.ToArray()))
+}
+
+function Move-LeftoversToQuarantine {
+    # Folders and files are MOVED, registry keys/values are exported first. Returns the session folder and a result per item.
+    param($Items, [string]$ProgramName, [string]$QuarantineRoot = $Script:QuarantineDir, $OtherPrograms = @())
+    $stamp = Get-Date -Format 'yyyy-MM-dd-HHmmss'
+    $dir = Join-Path $QuarantineRoot ('{0}-{1}' -f $stamp, (ConvertTo-SafeFileName -Text $ProgramName))
+    if ($Script:DryRun) {
+        foreach ($i in @($Items)) { Write-Tag INFO ("[DRY RUN] would quarantine {0}: {1}" -f $i.Type, $i.Path) }
+        return [pscustomobject]@{ Dir = ''; Moved = 0; Failed = 0; Results = @() }
+    }
+    New-Item -ItemType Directory -Path (Join-Path $dir 'files') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $dir 'registry') -Force | Out-Null
+    $entries = New-Object System.Collections.Generic.List[object]
+    $moved = 0; $failed = 0; $n = 0
+    $excl = @(Get-ExcludeList)
+    # Empty-folder cleanup goes last so it sees the result of the moves before it.
+    $ordered = @(@($Items | Where-Object { $_.Type -ne 'EmptyFolder' }) + @($Items | Where-Object { $_.Type -eq 'EmptyFolder' }))
+    foreach ($i in $ordered) {
+        $n++
+        $e = [ordered]@{ Type = $i.Type; Path = $i.Path; Name = $i.Name; QuarantinePath = ''; Result = 'failed'; Note = '' }
+        try {
+            if (([string]$i.Status -eq 'Protected') -or (Test-LeftoverExcluded -Path $i.Path -Name $i.Name -Patterns $excl)) { throw 'It is on the exclude list, so it was left alone.' }
+            switch ($i.Type) {
+                { $_ -in @('Folder', 'File') } {
+                    if (-not (Test-LeftoverPathAllowed -Path $i.Path -OtherPrograms $OtherPrograms)) { throw 'This path is protected and was not touched.' }
+                    $dest = Join-Path (Join-Path $dir 'files') ('{0:D3}_{1}' -f $n, (ConvertTo-SafeFileName -Text (Split-Path -Leaf $i.Path)))
+                    Write-Command ("Move-Item -LiteralPath '{0}' -Destination '{1}'" -f $i.Path, $dest)
+                    Move-Item -LiteralPath $i.Path -Destination $dest -ErrorAction Stop
+                    $e.QuarantinePath = $dest; $e.Result = 'moved'
+                }
+                'EmptyFolder' {
+                    if (-not (Test-LeftoverPathAllowed -Path $i.Path -OtherPrograms $OtherPrograms)) { throw 'This path is protected and was not touched.' }
+                    if (-not (Test-FolderHasNoFiles -Path $i.Path)) { throw 'The folder still contains files, so it was kept.' }
+                    Write-Command ("Remove-Item -LiteralPath '{0}' -Recurse -Force   # contains no files" -f $i.Path)
+                    Remove-Item -LiteralPath $i.Path -Recurse -Force -ErrorAction Stop
+                    $e.Result = 'moved'
+                }
+                'RegistryKey' {
+                    if ((Split-Path -Leaf $i.Path).ToLower() -in $Script:ProtectedLeafNames) { throw 'This key is protected and was not touched.' }
+                    $reg = Join-Path (Join-Path $dir 'registry') ('{0:D3}_key.reg' -f $n)
+                    $rp = ConvertTo-RegExePath -Path $i.Path
+                    Write-Command ('reg.exe export "{0}" "{1}" /y' -f $rp, $reg)
+                    $out = & reg.exe export $rp $reg /y 2>&1
+                    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $reg) -or (Get-Item -LiteralPath $reg).Length -eq 0) { throw ('Could not back up the key first, so it was kept: ' + (($out | Out-String).Trim())) }
+                    Write-Command ("Remove-Item -LiteralPath '{0}' -Recurse -Force" -f $i.Path)
+                    Remove-Item -LiteralPath $i.Path -Recurse -Force -ErrorAction Stop
+                    $e.QuarantinePath = $reg; $e.Result = 'moved'
+                }
+                'RunValue' {
+                    $reg = Join-Path (Join-Path $dir 'registry') ('{0:D3}_run.reg' -f $n)
+                    $rp = ConvertTo-RegExePath -Path $i.Path
+                    Write-Command ('reg.exe export "{0}" "{1}" /y' -f $rp, $reg)
+                    $out = & reg.exe export $rp $reg /y 2>&1
+                    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $reg)) { throw ('Could not back up the startup key first, so it was kept: ' + (($out | Out-String).Trim())) }
+                    [void](Remove-RegistryValueSafe -Path $i.Path -Name $i.Name)
+                    $e.QuarantinePath = $reg; $e.Result = 'moved'
+                }
+                default { throw "Unknown item type $($i.Type)" }
+            }
+            $moved++
+            Write-Tag OK ("Quarantined {0}: {1}" -f $i.Type, $i.Path)
+        } catch {
+            $failed++
+            $e.Note = $_.Exception.Message
+            Write-Tag FAIL ("{0}: {1}" -f $i.Path, $_.Exception.Message)
+        }
+        Write-Log -Level $(if ($e.Result -eq 'moved') { 'INFO' } else { 'FAIL' }) -Action 'QUARANTINE' -Target ([string]$i.Path) -Result ([string]$e.Result) -ErrorText ([string]$e.Note)
+        $entries.Add([pscustomobject]$e)
+    }
+    Write-JsonFile -Path (Join-Path $dir 'manifest.json') -Object ([ordered]@{
+        Program = $ProgramName; Created = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); Version = $Script:Version; Entries = @($entries.ToArray())
+    })
+    return [pscustomobject]@{ Dir = $dir; Moved = $moved; Failed = $failed; Results = @($entries.ToArray()) }
+}
+
+function Restore-Quarantine {
+    # Puts every quarantined item back. Never overwrites something that already exists at the original path.
+    param($Session)
+    $ok = 0; $skipped = 0; $failed = 0
+    foreach ($e in @($Session.Manifest.Entries)) {
+        if ($e.Result -ne 'moved') { continue }
+        try {
+            if ($e.Type -in @('Folder', 'File')) {
+                if (Test-Path -LiteralPath $e.Path) {
+                    Write-Tag SKIP ('Already exists, left alone: ' + $e.Path)
+                    $skipped++
+                } else {
+                    $parent = Split-Path -Parent $e.Path
+                    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+                    Write-Command ("Move-Item -LiteralPath '{0}' -Destination '{1}'" -f $e.QuarantinePath, $e.Path)
+                    Move-Item -LiteralPath $e.QuarantinePath -Destination $e.Path -ErrorAction Stop
+                    $ok++
+                    Write-Tag OK ('Restored ' + $e.Path)
+                }
+            } elseif ($e.Type -eq 'EmptyFolder') {
+                if (-not (Test-Path -LiteralPath $e.Path)) { New-Item -ItemType Directory -Path $e.Path -Force | Out-Null }
+                $ok++
+                Write-Tag OK ('Re-created empty folder ' + $e.Path)
+            } else {
+                Write-Command ('reg.exe import "{0}"' -f $e.QuarantinePath)
+                $out = & reg.exe import $e.QuarantinePath 2>&1
+                if ($LASTEXITCODE -ne 0) { throw (($out | Out-String).Trim()) }
+                $ok++
+                Write-Tag OK ('Restored ' + $e.Path)
+            }
+        } catch { $failed++; Write-Tag FAIL ("{0}: {1}" -f $e.Path, $_.Exception.Message) }
+    }
+    Write-Log -Level INFO -Action 'QUARANTINE_RESTORE' -Target $Session.Id -Result ("ok={0} skipped={1} failed={2}" -f $ok, $skipped, $failed)
+    return [pscustomobject]@{ Restored = $ok; Skipped = $skipped; Failed = $failed }
+}
+
+function Test-LeftoverPathAllowed {
+    # Safety gate: a path that fails this is never shown as a leftover and never touched.
+    param([string]$Path, $OtherPrograms = @())
+    if (-not $Path) { return $false }
+    try { $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/') } catch { return $false }
+    if ($full.Length -le 3) { return $false }
+    $leaf = (Split-Path -Leaf $full).ToLower()
+    if ($Script:ProtectedLeafNames -contains $leaf) { return $false }
+    foreach ($r in @($env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, $env:USERPROFILE, $env:LOCALAPPDATA, $env:APPDATA, $env:SystemDrive)) {
+        if ($r -and ($full.TrimEnd('\', '/') -ieq $r.TrimEnd('\', '/'))) { return $false }
+    }
+    if ($env:SystemRoot -and $full.StartsWith($env:SystemRoot, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    foreach ($o in @($OtherPrograms)) {
+        $ol = ([string]$o.InstallLocation).TrimEnd('\', '/')
+        if (-not $ol) { continue }
+        if ($ol -ieq $full -or $ol.StartsWith($full + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $ol.StartsWith($full + '/', [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    }
+    return $true
+}
+
+function Get-LeftoverNames {
+    param($Program)
+    $set = @()
+    foreach ($n in @($Program.Name, $(if ($Program.InstallLocation) { Split-Path -Leaf $Program.InstallLocation }))) {
+        $t = ([string]$n).Trim()
+        if ($t.Length -lt 4) { continue }
+        if ($Script:ProtectedLeafNames -contains $t.ToLower()) { continue }
+        if ($set -notcontains $t) { $set += $t }
+    }
+    return @($set)
+}
+
+# ---------------------------------------------------------------
+# v0.11: review status, exclude list, options, forced uninstall by name
+# ---------------------------------------------------------------
+
+function Get-UninstallerSettings {
+    $d = [pscustomobject]@{ CheckAllByDefault = $false; ForceStopExecutables = $false; OnlyBuiltIn = $false }
+    if (Test-Path -LiteralPath $Script:UninstallerSettingsFile) {
+        try {
+            $s = Read-JsonFile -Path $Script:UninstallerSettingsFile
+            foreach ($n in @('CheckAllByDefault', 'ForceStopExecutables', 'OnlyBuiltIn')) {
+                if ($null -ne $s.$n) { $d.$n = [bool]$s.$n }
+            }
+        } catch { Write-Log -Level WARN -Action 'UNINSTALL_SETTINGS' -Target $Script:UninstallerSettingsFile -ErrorText $_.Exception.Message }
+    }
+    return $d
+}
+
+function Set-UninstallerSetting {
+    param([ValidateSet('CheckAllByDefault', 'ForceStopExecutables', 'OnlyBuiltIn')][string]$Name, [bool]$Value)
+    $s = Get-UninstallerSettings
+    $s.$Name = $Value
+    if ($Script:DryRun) { Write-Tag INFO ("[DRY RUN] would set {0} = {1}" -f $Name, $Value); return $s }
+    Write-JsonFile -Path $Script:UninstallerSettingsFile -Object ([ordered]@{
+        CheckAllByDefault = [bool]$s.CheckAllByDefault; ForceStopExecutables = [bool]$s.ForceStopExecutables; OnlyBuiltIn = [bool]$s.OnlyBuiltIn
+    })
+    Write-Log -Level INFO -Action 'UNINSTALL_SETTING' -Target $Name -Result ([string]$Value)
+    return $s
+}
+
+function ConvertTo-ExcludeKey {
+    # One spelling for folder and registry paths so they can be compared: HKLM:\..., backslashes, no trailing slash.
+    param([string]$Text)
+    $t = ([string]$Text).Trim().Trim('"')
+    $t = $t -replace '^Microsoft\.PowerShell\.Core\\Registry::', '' -replace '^Registry::', ''
+    $t = $t -replace '^HKEY_LOCAL_MACHINE', 'HKLM' -replace '^HKEY_CURRENT_USER', 'HKCU'
+    $t = $t -replace '^(HKLM|HKCU)(?=\\)', '$1:'
+    $t = $t -replace '/', '\'
+    return $t.TrimEnd('\')
+}
+
+function Get-ExcludePatternProblem {
+    # Returns a plain-words problem, or '' when the pattern is acceptable.
+    param([string]$Pattern)
+    $t = ConvertTo-ExcludeKey -Text $Pattern
+    if ($t.Length -lt 6) { return 'That is too short. Type a full folder or registry path.' }
+    if ($t -match '^[\*\?\\:/\.\s]*$') { return 'A pattern made only of wildcards would match almost everything.' }
+    if ($t -match '^(HKLM:|HKCU:|[A-Za-z]:)\\?[\*\?]') { return 'A wildcard right after the root would match far too much. Start with a real folder or key name.' }
+    return ''
+}
+
+function Get-ExcludeList {
+    if (-not (Test-Path -LiteralPath $Script:ExcludeFile)) { return @() }
+    try {
+        $o = Read-JsonFile -Path $Script:ExcludeFile
+        return @(@($o.Patterns) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    } catch {
+        Write-Log -Level WARN -Action 'EXCLUDE_READ' -Target $Script:ExcludeFile -ErrorText $_.Exception.Message
+        return @()
+    }
+}
+
+function Add-ExcludeEntry {
+    param([string]$Pattern)
+    $t = ConvertTo-ExcludeKey -Text $Pattern
+    $problem = Get-ExcludePatternProblem -Pattern $t
+    if ($problem) { throw $problem }
+    $cur = @(Get-ExcludeList)
+    if (@($cur | Where-Object { $_ -ieq $t }).Count -gt 0) { return $t }
+    if ($Script:DryRun) { Write-Tag INFO ("[DRY RUN] would add to the exclude list: {0}" -f $t); return $t }
+    Write-JsonFile -Path $Script:ExcludeFile -Object ([ordered]@{ Patterns = @($cur + $t) })
+    Write-Log -Level INFO -Action 'EXCLUDE_ADD' -Target $t
+    return $t
+}
+
+function Remove-ExcludeEntry {
+    param([string]$Pattern)
+    $t = ConvertTo-ExcludeKey -Text $Pattern
+    $cur = @(Get-ExcludeList)
+    $keep = @($cur | Where-Object { $_ -ine $t })
+    if ($Script:DryRun) { Write-Tag INFO ("[DRY RUN] would remove from the exclude list: {0}" -f $t); return }
+    Write-JsonFile -Path $Script:ExcludeFile -Object ([ordered]@{ Patterns = @($keep) })
+    Write-Log -Level INFO -Action 'EXCLUDE_REMOVE' -Target $t
+}
+
+function ConvertTo-ExcludeRegex {
+    # * = any text, ? = one character. A pattern also covers everything underneath it.
+    param([string]$Pattern)
+    $b = [regex]::Escape((ConvertTo-ExcludeKey -Text $Pattern))
+    $b = $b -replace '\\\*', '.*' -replace '\\\?', '.'
+    return ('^(?:' + $b + ')(?:\\.*)?$')
+}
+
+function Test-LeftoverExcluded {
+    param([string]$Path, [string]$Name = '', $Patterns = $null)
+    if ($null -eq $Patterns) { $Patterns = @(Get-ExcludeList) }
+    if (@($Patterns).Count -eq 0) { return $false }
+    $base = ConvertTo-ExcludeKey -Text $Path
+    $cands = @($base)
+    if ($Name) { $cands += ($base + '\' + $Name) }
+    foreach ($pat in @($Patterns)) {
+        $re = ConvertTo-ExcludeRegex -Pattern $pat
+        foreach ($c in $cands) { if ([regex]::IsMatch($c, $re, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) { return $true } }
+    }
+    return $false
+}
+
+function Add-LeftoverStatus {
+    # Created = matched to this program, can be selected.  Protected = on the exclude list, never touched.
+    # Parent = where the item sits, shown as grey context in the review screen.
+    param($Items)
+    $pats = @(Get-ExcludeList)
+    foreach ($i in @($Items)) {
+        $st = 'Created'
+        if (Test-LeftoverExcluded -Path $i.Path -Name $i.Name -Patterns $pats) { $st = 'Protected' }
+        if ($i.Type -eq 'RunValue') { $parent = ConvertTo-ExcludeKey -Text $i.Path }
+        else { $parent = (ConvertTo-ExcludeKey -Text $i.Path) -replace '\\[^\\]+$', '' }
+        Add-Member -InputObject $i -NotePropertyName Status -NotePropertyValue $st -Force
+        Add-Member -InputObject $i -NotePropertyName Parent -NotePropertyValue $parent -Force
+        $i
+    }
+}
+
+function Open-RegistryKeyInRegedit {
+    # Regedit opens at the key it last showed, so we set that value first (a harmless viewer setting).
+    param([string]$Path)
+    $full = ConvertTo-RegExePath -Path (ConvertTo-ExcludeKey -Text $Path)
+    $full = $full -replace '^HKLM(?=\\|$)', 'HKEY_LOCAL_MACHINE' -replace '^HKCU(?=\\|$)', 'HKEY_CURRENT_USER'
+    $last = 'Computer\' + $full
+    if ($Script:DryRun) { Write-Tag INFO ("[DRY RUN] would open Regedit at {0}" -f $last); return $last }
+    $rk = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Applets\Regedit'
+    if (-not (Test-Path -LiteralPath $rk)) { Write-Command ("New-Item -Path '{0}' -Force" -f $rk); New-Item -Path $rk -Force | Out-Null }
+    Write-Command ("Set-ItemProperty -Path '{0}' -Name LastKey -Value '{1}'" -f $rk, $last)
+    Set-ItemProperty -LiteralPath $rk -Name 'LastKey' -Value $last -ErrorAction Stop
+    Write-Command 'Start-Process regedit.exe'
+    Start-Process -FilePath 'regedit.exe'
+    return $last
+}
+
+function Open-LeftoverFolder {
+    param([string]$Path)
+    if ($Script:DryRun) { Write-Tag INFO ("[DRY RUN] would show {0} in Explorer" -f $Path); return }
+    if (-not (Test-Path -LiteralPath $Path)) { throw 'That item is no longer there.' }
+    Write-Command ("Start-Process explorer.exe -ArgumentList '/select,""{0}""'" -f $Path)
+    Start-Process -FilePath 'explorer.exe' -ArgumentList ('/select,"{0}"' -f $Path)
+}
+
+function Stop-ProgramProcesses {
+    # Only processes whose executable sits inside the program's own install folder.
+    param($Program)
+    if ($Script:DryRun) { return 0 }
+    $loc = ([string]$Program.InstallLocation).TrimEnd('\', '/')
+    if (-not $loc -or $loc.Length -lt 6 -or -not (Test-LeftoverPathAllowed -Path $loc)) { return 0 }
+    $n = 0
+    foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
+        if ($p.Id -eq $PID) { continue }
+        $exe = ''
+        try { $exe = [string]$p.Path } catch { $exe = '' }
+        if (-not $exe) { continue }
+        if ($exe.StartsWith($loc + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $exe.StartsWith($loc + '/', [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Command ("Stop-Process -Id {0} -Force   # {1}" -f $p.Id, $exe)
+            try { Stop-Process -Id $p.Id -Force -ErrorAction Stop; $n++ } catch { Write-Tag WARN ("Could not stop {0}: {1}" -f $p.ProcessName, $_.Exception.Message) }
+        }
+    }
+    return $n
+}
+
+function Test-ForcedPathAllowed {
+    # A folder typed by hand must sit strictly inside a normal install location.
+    param([string]$Path)
+    if (-not (Test-LeftoverPathAllowed -Path $Path)) { return $false }
+    try { $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/') } catch { return $false }
+    foreach ($r in @(Get-DefaultFolderRoots)) {
+        $rt = ([string]$r).TrimEnd('\', '/')
+        if (-not $rt) { continue }
+        if ($full.StartsWith($rt + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $full.StartsWith($rt + '/', [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+function Find-UninstallMatches {
+    # Looks for a built-in uninstaller (installed programs) or an earlier DIVuninstaller record by exact name, wildcard name or folder.
+    # Several names can be separated with semicolons. Nothing is changed.
+    param([string]$Name = '', [string]$Path = '', $Programs = $null)
+    if ($null -eq $Programs) { $Programs = @(Get-InstalledPrograms) }
+    $names = @(([string]$Name -split ';') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $pp = ([string]$Path).Trim().Trim('"').TrimEnd('\', '/')
+    $out = @()
+    foreach ($p in @($Programs)) {
+        $hit = $false
+        foreach ($n in $names) {
+            if ($n -match '[\*\?]') { if ($p.Name -like $n) { $hit = $true } }
+            elseif ($p.Name -ieq $n) { $hit = $true }
+        }
+        if ($pp -and $p.InstallLocation) {
+            $il = ([string]$p.InstallLocation).TrimEnd('\', '/')
+            if ($il -ieq $pp -or $il.StartsWith($pp + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $il.StartsWith($pp + '/', [System.StringComparison]::OrdinalIgnoreCase)) { $hit = $true }
+        }
+        if ($hit) { $out += [pscustomobject]@{ Source = 'Installed program (has its own uninstaller)'; Name = $p.Name; Version = $p.Version; Program = $p } }
+    }
+    foreach ($h in @(Get-UninstallHistory)) {
+        foreach ($n in $names) {
+            $m = $false
+            if ($n -match '[\*\?]') { $m = ($h.Name -like $n) } else { $m = ($h.Name -ieq $n) }
+            if ($m) { $out += [pscustomobject]@{ Source = 'Earlier DIVuninstaller record'; Name = $h.Name; Version = $h.Version; Program = $null } }
+        }
+    }
+    return @($out)
+}
+
+function New-ForcedProgram {
+    # A stand-in for a program that has no uninstall entry (removed earlier, partly installed, or never listed).
+    param([string]$Name = '', [string]$InstallLocation = '')
+    $loc = ([string]$InstallLocation).Trim().Trim('"').TrimEnd('\', '/')
+    $nm = ([string]$Name).Trim()
+    if (-not $nm -and $loc) { $nm = Split-Path -Leaf $loc }
+    if ($nm.Length -lt 4) { throw 'Type the full program name (at least 4 characters).' }
+    if ($nm -match '[\*\?;]') { throw 'Wildcards and semicolons are for searching only. Type one exact program name to scan for.' }
+    if (Test-ProgramProtected -Name $nm) { throw ("{0} looks like a protected program (system, runtime, driver or security software) and cannot be removed here." -f $nm) }
+    if ($loc -and -not (Test-ForcedPathAllowed -Path $loc)) { throw 'That folder is not allowed. It must be inside Program Files, ProgramData or AppData, and not a system or shared folder.' }
+    return [pscustomobject]@{
+        Name = $nm; Publisher = ''; Version = ''; InstallDate = ''; InstallLocation = $loc; UninstallString = ''; QuietUninstallString = ''
+        SizeKB = 0; KeyName = ''; KeyPath = ''; Scope = 'Machine'; Protected = $false
+    }
+}
+
+# ---------------------------------------------------------------
+# v0.12: batch uninstall and the Windows Apps list
+# ---------------------------------------------------------------
+
+function Test-BatchProgramsReady {
+    # Checks the whole batch BEFORE anything runs. Returns a plain-words problem, or '' when it is fine.
+    param($Programs)
+    $progs = @($Programs)
+    if ($progs.Count -lt 1) { return 'Select at least one program.' }
+    $prot = @($progs | Where-Object { $_.Protected } | ForEach-Object { $_.Name })
+    if ($prot.Count -gt 0) { return ("These are protected programs and cannot be removed here: {0}. Deselect them and try again." -f ($prot -join ', ')) }
+    $bad = @($progs | Where-Object { -not (Split-UninstallCommand -Text $_.UninstallString) } | ForEach-Object { $_.Name })
+    if ($bad.Count -gt 0) { return ("The uninstall command could not be read safely for: {0}. Nothing was run. Remove those one at a time (forced uninstall if needed)." -f ($bad -join ', ')) }
+    return ''
+}
+
+function Invoke-BatchUninstall {
+    # ONE restore point for the whole batch, then each program's own uninstaller, one after another.
+    # A failure in one program does not stop the others. Nothing is run if any program fails the up-front check.
+    param($Programs, [switch]$SkipRestorePoint)
+    $progs = @($Programs)
+    $problem = Test-BatchProgramsReady -Programs $progs
+    if ($problem) { throw $problem }
+    $rp = 'Skipped'
+    if (-not $SkipRestorePoint -and -not $Script:DryRun) {
+        $r = New-DivRestorePoint -Description ('DIVuninstaller batch of {0} programs' -f $progs.Count)
+        $rp = $r.Status
+        if ($r.Message) { Write-Tag WARN ('Restore point: ' + $r.Message) }
+    }
+    Write-Log -Level INFO -Action 'BATCH_UNINSTALL' -Target ([string]$progs.Count) -Message (($progs | ForEach-Object { $_.Name }) -join '; ')
+    $results = @()
+    $n = 0
+    foreach ($p in $progs) {
+        $n++
+        Write-Tag INFO ("Batch {0} of {1}: {2}" -f $n, $progs.Count, $p.Name)
+        try {
+            $r = Invoke-ProgramUninstall -Program $p -SkipRestorePoint
+            if ($r.BackupDir) { Update-UninstallRecord -Dir $r.BackupDir -Values @{ Batch = $true; BatchSize = $progs.Count; RestorePoint = $rp } }
+            $results += [pscustomobject]@{ Program = $p; Result = $r; Error = '' }
+        } catch {
+            Write-Log -Level FAIL -Action 'UNINSTALL' -Target $p.Name -ErrorText $_.Exception.Message
+            Write-Tag FAIL ("{0}: {1}" -f $p.Name, $_.Exception.Message)
+            $results += [pscustomobject]@{ Program = $p; Result = $null; Error = $_.Exception.Message }
+        }
+    }
+    return [pscustomobject]@{ RestorePoint = $rp; Results = @($results) }
+}
+
+function Get-BatchLeftovers {
+    # One combined list for every program in the batch that is really gone. Each item remembers which program it belongs to.
+    param($Batch, [string]$Mode, $AllPrograms = @())
+    if ($Mode -eq 'None') { return @() }
+    $keys = @($Batch.Results | ForEach-Object { $_.Program.KeyPath })
+    $others = @($AllPrograms | Where-Object { $keys -notcontains $_.KeyPath })
+    $seen = @{}
+    $out = @()
+    foreach ($b in @($Batch.Results)) {
+        if (-not $b.Result -or $b.Result.StillInstalled) { continue }
+        $found = @(Get-ProgramLeftovers -Program $b.Program -OtherPrograms $others -Mode $Mode)
+        Update-UninstallRecord -Dir $b.Result.BackupDir -Values @{ Mode = $Mode; LeftoversFound = $found.Count; LeftoversMoved = 0 }
+        foreach ($i in $found) {
+            $k = ($i.Type + '|' + $i.Path + '|' + $i.Name).ToLower()
+            if ($seen.ContainsKey($k)) { continue }
+            $seen[$k] = $true
+            Add-Member -InputObject $i -NotePropertyName ProgramName -NotePropertyValue ([string]$b.Program.Name) -Force
+            Add-Member -InputObject $i -NotePropertyName RecordDir -NotePropertyValue ([string]$b.Result.BackupDir) -Force
+            $out += $i
+        }
+    }
+    return @($out)
+}
+
+function Move-BatchLeftovers {
+    # Quarantine the chosen items, one quarantine entry per program so each can be restored on its own.
+    param($Items, $OtherPrograms = @())
+    $moved = 0; $failed = 0; $dirs = @()
+    foreach ($g in @(@($Items) | Group-Object -Property ProgramName)) {
+        $m = Move-LeftoversToQuarantine -Items @($g.Group) -ProgramName ([string]$g.Name) -OtherPrograms $OtherPrograms
+        $moved += $m.Moved; $failed += $m.Failed
+        if ($m.Dir) { $dirs += $m.Dir }
+        $rec = [string](@($g.Group)[0].RecordDir)
+        Update-UninstallRecord -Dir $rec -Values @{ LeftoversMoved = $m.Moved; Quarantine = $m.Dir }
+    }
+    return [pscustomobject]@{ Moved = $moved; Failed = $failed; Dirs = @($dirs) }
+}
+
+function Get-WindowsApps {
+    # The current user's Store and built-in apps that Windows says can be removed. Frameworks and system packages are left out.
+    $out = @()
+    foreach ($p in @(Get-AppxPackage -ErrorAction SilentlyContinue)) {
+        if ($p.IsFramework -or $p.NonRemovable) { continue }
+        if ([string]$p.SignatureKind -eq 'System') { continue }
+        $isRes = $false
+        try { $isRes = [bool]$p.IsResourcePackage } catch { $isRes = $false }
+        if ($isRes) { continue }
+        $pub = ''
+        try { $pub = [string]$p.PublisherId } catch { $pub = '' }
+        $out += [pscustomobject]@{
+            Name = [string]$p.Name; Version = [string]$p.Version; Publisher = $pub
+            PackageFullName = [string]$p.PackageFullName; InstallLocation = [string]$p.InstallLocation
+            Protected = (Test-PackageProtected -Name ([string]$p.Name))
+        }
+    }
+    return @($out | Sort-Object -Property Name)
+}
+
+function Remove-WindowsApps {
+    # Removes apps by exact package name through the same guarded function Optional Apps uses.
+    # Current user only by default. -AllUsers (needs Administrator) also removes the provisioned copy for new users.
+    param($Apps, [switch]$AllUsers, [switch]$SkipRestorePoint)
+    $apps = @($Apps)
+    if ($apps.Count -lt 1) { throw 'Select at least one app.' }
+    $prot = @($apps | Where-Object { $_.Protected -or (Test-PackageProtected -Name $_.Name) } | ForEach-Object { $_.Name })
+    if ($prot.Count -gt 0) { throw ("These are protected apps and cannot be removed here: {0}." -f ($prot -join ', ')) }
+    if ($AllUsers -and -not (Test-Administrator) -and -not $Script:DryRun) { throw 'Removing for all users needs Administrator. Run DIVoptimizer as Administrator, or remove for the current user only.' }
+    $rp = 'Skipped'
+    if (-not $SkipRestorePoint -and -not $Script:DryRun) {
+        $r = New-DivRestorePoint -Description ('DIVuninstaller Windows Apps ({0})' -f $apps.Count)
+        $rp = $r.Status
+        if ($r.Message) { Write-Tag WARN ('Restore point: ' + $r.Message) }
+    }
+    $results = @()
+    foreach ($a in $apps) {
+        try {
+            if ($AllUsers) { $c = Remove-AppPackageExact -Name $a.Name } else { $c = Remove-AppPackageExact -Name $a.Name -CurrentUserOnly }
+            Write-Log -Level INFO -Action 'APP_REMOVE' -Target $a.Name -Result ([string]$c)
+            if ($c -gt 0) { Write-Tag OK ("Removed {0}" -f $a.Name) } else { Write-Tag SKIP ("{0}: nothing to remove" -f $a.Name) }
+            $results += [pscustomobject]@{ Name = $a.Name; Removed = [int]$c; Error = '' }
+        } catch {
+            Write-Log -Level FAIL -Action 'APP_REMOVE' -Target $a.Name -ErrorText $_.Exception.Message
+            Write-Tag FAIL ("{0}: {1}" -f $a.Name, $_.Exception.Message)
+            $results += [pscustomobject]@{ Name = $a.Name; Removed = 0; Error = $_.Exception.Message }
+        }
+    }
+    return [pscustomobject]@{ RestorePoint = $rp; Results = @($results) }
+}
+
+# ---------------------------------------------------------------
+# v0.13: browser extensions (Chrome, Edge, Brave, Firefox)
+# Listing is read-only. Removal moves the extension to the DIVuninstaller quarantine; browser databases are never edited.
+# ---------------------------------------------------------------
+
+function Get-ChromiumExtensionName {
+    param([string]$VersionDir, [string]$Fallback = '')
+    $name = ''
+    try {
+        $mfPath = Join-Path $VersionDir 'manifest.json'
+        if (Test-Path -LiteralPath $mfPath) {
+            $m = (Get-Content -LiteralPath $mfPath -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
+            $name = [string]$m.name
+            if ($name -match '^__MSG_(.+)__$') {
+                $key = [string]$Matches[1]
+                $resolved = ''
+                $locs = @([string]$m.default_locale, 'en', 'en_US') | Where-Object { $_ }
+                foreach ($loc in $locs) {
+                    $lp = Join-Path (Join-Path (Join-Path $VersionDir '_locales') $loc) 'messages.json'
+                    if (-not (Test-Path -LiteralPath $lp)) { continue }
+                    try {
+                        $msgs = (Get-Content -LiteralPath $lp -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
+                        foreach ($pr in $msgs.PSObject.Properties) { if ($pr.Name -ieq $key -and $pr.Value.message) { $resolved = [string]$pr.Value.message; break } }
+                    } catch { $resolved = '' }
+                    if ($resolved) { break }
+                }
+                if ($resolved) { $name = $resolved } else { $name = '' }
+            }
+        }
+    } catch { $name = '' }
+    if (-not $name) { $name = $Fallback }
+    return $name
+}
+
+function Get-BrowserExtensions {
+    # Read-only. Chromium browsers: <profile>\Extensions\<id>\<version>. Firefox: extensions.json in each profile.
+    param($ChromiumRoots = $null, [string[]]$FirefoxRoots = $null)
+    if ($null -eq $ChromiumRoots) {
+        $ChromiumRoots = @()
+        if ($env:LOCALAPPDATA) {
+            $ChromiumRoots = @(
+                @{ Browser = 'Chrome'; Root = (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data') },
+                @{ Browser = 'Edge'; Root = (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data') },
+                @{ Browser = 'Brave'; Root = (Join-Path $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\User Data') }
+            )
+        }
+    }
+    if ($null -eq $FirefoxRoots) {
+        $FirefoxRoots = @()
+        if ($env:APPDATA) { $FirefoxRoots = @((Join-Path $env:APPDATA 'Mozilla\Firefox\Profiles')) }
+    }
+    $out = @()
+    foreach ($c in @($ChromiumRoots)) {
+        if (-not (Test-Path -LiteralPath $c.Root)) { continue }
+        foreach ($prof in @(Get-ChildItem -LiteralPath $c.Root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' })) {
+            $ext = Join-Path $prof.FullName 'Extensions'
+            if (-not (Test-Path -LiteralPath $ext)) { continue }
+            foreach ($idDir in @(Get-ChildItem -LiteralPath $ext -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'Temp' })) {
+                $vers = @(Get-ChildItem -LiteralPath $idDir.FullName -Directory -ErrorAction SilentlyContinue | Sort-Object -Property @{ Expression = { try { [version](($_.Name) -replace '_\d+$', '') } catch { [version]'0.0' } } } -Descending)
+                if ($vers.Count -eq 0) { continue }
+                $out += [pscustomobject]@{
+                    Browser = [string]$c.Browser; Profile = [string]$prof.Name; Id = [string]$idDir.Name
+                    Name = (Get-ChromiumExtensionName -VersionDir $vers[0].FullName -Fallback $idDir.Name)
+                    Version = (([string]$vers[0].Name) -replace '_\d+$', ''); Path = [string]$idDir.FullName; Kind = 'Folder'
+                }
+            }
+        }
+    }
+    foreach ($fr in @($FirefoxRoots)) {
+        if (-not (Test-Path -LiteralPath $fr)) { continue }
+        foreach ($prof in @(Get-ChildItem -LiteralPath $fr -Directory -ErrorAction SilentlyContinue)) {
+            $ej = Join-Path $prof.FullName 'extensions.json'
+            if (-not (Test-Path -LiteralPath $ej)) { continue }
+            try {
+                $j = (Get-Content -LiteralPath $ej -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
+                foreach ($a in @($j.addons)) {
+                    if ([string]$a.type -ne 'extension') { continue }
+                    if ([string]$a.location -ne 'app-profile') { continue }
+                    $nm = ''
+                    try { $nm = [string]$a.defaultLocale.name } catch { $nm = '' }
+                    if (-not $nm) { $nm = [string]$a.id }
+                    $p = ''
+                    try { $p = [string]$a.path } catch { $p = '' }
+                    $out += [pscustomobject]@{ Browser = 'Firefox'; Profile = [string]$prof.Name; Id = [string]$a.id; Name = $nm; Version = [string]$a.version; Path = $p; Kind = 'File' }
+                }
+            } catch { Write-Log -Level WARN -Action 'EXT_LIST' -Target $ej -ErrorText $_.Exception.Message }
+        }
+    }
+    return @($out | Sort-Object -Property Browser, Name)
+}
+
+function Test-BrowserRunning {
+    param([string]$Browser)
+    $proc = switch ($Browser) { 'Chrome' { 'chrome' } 'Edge' { 'msedge' } 'Brave' { 'brave' } 'Firefox' { 'firefox' } default { '' } }
+    if (-not $proc) { return $false }
+    return (@(Get-Process -Name $proc -ErrorAction SilentlyContinue).Count -gt 0)
+}
+
+function Test-BrowserExtensionPathAllowed {
+    # Only the extension's own folder (Chromium) or .xpi file (Firefox) may be touched, inside the extensions folder of a profile.
+    param($Item)
+    $p = ([string]$Item.Path).TrimEnd('\', '/')
+    if (-not $p) { return $false }
+    if ($Item.Kind -eq 'Folder') { return ($p -match '[\\/]Extensions[\\/][^\\/]+$') }
+    return (($p -match '[\\/]extensions[\\/][^\\/]+\.xpi$') -and ($p -match '[\\/]Profiles[\\/]'))
+}
+
+function Remove-BrowserExtensions {
+    # One quarantine entry per extension, so each can be restored on its own. The browser must be closed first.
+    param($Items, [string]$QuarantineRoot = $Script:QuarantineDir)
+    $items = @($Items)
+    if ($items.Count -lt 1) { throw 'Select at least one extension.' }
+    $open = @($items | ForEach-Object { $_.Browser } | Sort-Object -Unique | Where-Object { Test-BrowserRunning -Browser $_ })
+    if ($open.Count -gt 0) { throw ("Close {0} first (all windows), then try again. A browser that is running would just put its extensions back." -f ($open -join ' and ')) }
+    $bad = @($items | Where-Object { -not (Test-BrowserExtensionPathAllowed -Item $_) } | ForEach-Object { $_.Name })
+    if ($bad.Count -gt 0) { throw ("These extensions have no folder or file DIVuninstaller can safely move, so nothing was removed: {0}. Remove them from the browser's own extensions page." -f ($bad -join ', ')) }
+    $moved = 0; $failed = 0; $dirs = @()
+    foreach ($e in $items) {
+        $li = [pscustomobject]@{ Type = $(if ($e.Kind -eq 'Folder') { 'Folder' } else { 'File' }); Path = $e.Path; Name = ''; Detail = ('{0} extension' -f $e.Browser); SizeBytes = 0; Risk = 'LOW'; Status = 'Created' }
+        $m = Move-LeftoversToQuarantine -Items @($li) -ProgramName ('{0} extension - {1}' -f $e.Browser, $e.Name) -QuarantineRoot $QuarantineRoot
+        $moved += $m.Moved; $failed += $m.Failed
+        if ($m.Dir) { $dirs += $m.Dir }
+        Write-Log -Level INFO -Action 'EXT_REMOVE' -Target ('{0}: {1}' -f $e.Browser, $e.Name) -Result ([string]$m.Moved)
+    }
+    return [pscustomobject]@{ Moved = $moved; Failed = $failed; Dirs = @($dirs) }
+}
+
+# ---------------------------------------------------------------
+# v0.14: install monitor (lightweight trace logs)
+# Take a snapshot, install a program, take a second snapshot. The difference is saved as a trace log.
+# Cleaning up from a log only lists items that were created in that window AND still exist, and moves them to quarantine.
+# This is best-effort: anything else that changed on the PC during the window can show up, so you review every item.
+# ---------------------------------------------------------------
+
+$Script:TraceDir = Join-Path $Script:DataRoot 'Traces'
+
+function Select-TopLevelPaths {
+    # Keeps only paths that are not inside another path in the list.
+    param([string[]]$Paths)
+    $kept = @()
+    foreach ($p in @($Paths | Where-Object { $_ } | Sort-Object -Property Length)) {
+        $child = $false
+        foreach ($k in $kept) {
+            $kk = $k.TrimEnd('\', '/')
+            if ($p.StartsWith($kk + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $p.StartsWith($kk + '/', [System.StringComparison]::OrdinalIgnoreCase)) { $child = $true; break }
+        }
+        if (-not $child) { $kept += $p }
+    }
+    return @($kept)
+}
+
+function Get-InstallSnapshot {
+    # Names only: folders two levels deep, shortcuts, registry keys two levels deep, startup values and services. No file contents.
+    param(
+        [string[]]$FolderRoots = $null,
+        [string[]]$FileRoots = $null,
+        [string[]]$RegistryRoots = @('HKCU:\Software', 'HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\WOW6432Node'),
+        [string[]]$UninstallRoots = $null,
+        [string[]]$RunKeys = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run', 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'),
+        [switch]$SkipServices
+    )
+    if ($null -eq $FolderRoots) { $FolderRoots = Get-DefaultFolderRoots }
+    if ($null -eq $FileRoots) { $FileRoots = Get-DefaultShortcutRoots }
+    if ($null -eq $UninstallRoots) { $UninstallRoots = $Script:UninstallKeyRoots }
+    $folders = New-Object System.Collections.Generic.List[string]
+    foreach ($r in @($FolderRoots)) {
+        if (-not (Test-Path -LiteralPath $r)) { continue }
+        foreach ($d1 in @(Get-ChildItem -LiteralPath $r -Directory -Force -ErrorAction SilentlyContinue)) {
+            $folders.Add($d1.FullName)
+            foreach ($d2 in @(Get-ChildItem -LiteralPath $d1.FullName -Directory -Force -ErrorAction SilentlyContinue)) { $folders.Add($d2.FullName) }
+        }
+    }
+    $files = New-Object System.Collections.Generic.List[string]
+    foreach ($r in @($FileRoots)) {
+        if (-not (Test-Path -LiteralPath $r)) { continue }
+        foreach ($f in @(Get-ChildItem -LiteralPath $r -Filter '*.lnk' -File -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 5000)) { $files.Add($f.FullName) }
+    }
+    $keys = New-Object System.Collections.Generic.List[string]
+    foreach ($r in @($RegistryRoots)) {
+        if (-not (Test-Path -LiteralPath $r)) { continue }
+        foreach ($k1 in @(Get-ChildItem -LiteralPath $r -ErrorAction SilentlyContinue)) {
+            $keys.Add('Registry::' + $k1.Name)
+            foreach ($k2 in @(Get-ChildItem -LiteralPath $k1.PSPath -ErrorAction SilentlyContinue)) { $keys.Add('Registry::' + $k2.Name) }
+        }
+    }
+    foreach ($r in @($UninstallRoots)) {
+        if (-not (Test-Path -LiteralPath $r)) { continue }
+        foreach ($k1 in @(Get-ChildItem -LiteralPath $r -ErrorAction SilentlyContinue)) { $keys.Add('Registry::' + $k1.Name) }
+    }
+    $runs = New-Object System.Collections.Generic.List[string]
+    foreach ($rk in @($RunKeys)) {
+        if (-not (Test-Path -LiteralPath $rk)) { continue }
+        $props = Get-ItemProperty -LiteralPath $rk -ErrorAction SilentlyContinue
+        if (-not $props) { continue }
+        foreach ($pr in @($props.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) { $runs.Add($rk + '|' + $pr.Name) }
+    }
+    $svc = @()
+    if (-not $SkipServices) { $svc = @(Get-Service -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Name }) }
+    return [pscustomobject]@{
+        Taken = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); Folders = @($folders.ToArray()); Files = @($files.ToArray())
+        RegistryKeys = @($keys.ToArray()); RunValues = @($runs.ToArray()); Services = @($svc)
+    }
+}
+
+function Compare-InstallSnapshots {
+    # Pure comparison. Returns the items created between the two snapshots, shaped like leftover items, plus new service names (information only).
+    param($Before, $After)
+    $cmp = [System.StringComparer]::OrdinalIgnoreCase
+    $mk = { param($arr) $h = New-Object 'System.Collections.Generic.HashSet[string]' -ArgumentList $cmp; foreach ($x in @($arr)) { [void]$h.Add([string]$x) }; return ,$h }
+    $bF = & $mk $Before.Folders; $bFi = & $mk $Before.Files; $bK = & $mk $Before.RegistryKeys; $bR = & $mk $Before.RunValues; $bS = & $mk $Before.Services
+    $skipRoots = @($Script:DataRoot, $env:TEMP, $env:TMP) | Where-Object { $_ }
+    $isNoise = {
+        param([string]$Path)
+        foreach ($sr in $skipRoots) { if ($Path.StartsWith(([string]$sr).TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)) { return $true } }
+        return $false
+    }
+    $items = @()
+    $newDirs = Select-TopLevelPaths -Paths @(@($After.Folders) | Where-Object { -not $bF.Contains([string]$_) })
+    foreach ($d in $newDirs) {
+        if (& $isNoise $d) { continue }
+        if (-not (Test-LeftoverPathAllowed -Path $d)) { continue }
+        $risk = 'LOW'
+        if ($env:ProgramFiles -and $d.StartsWith($env:ProgramFiles, [System.StringComparison]::OrdinalIgnoreCase)) { $risk = 'CHECK' }
+        $items += [pscustomobject]@{ Type = 'Folder'; Path = $d; Name = ''; Detail = 'Created while the program was installed'; SizeBytes = [long]0; Risk = $risk }
+    }
+    foreach ($f in @(@($After.Files) | Where-Object { -not $bFi.Contains([string]$_) })) {
+        $inside = $false
+        foreach ($nd in $newDirs) { if ($f.StartsWith($nd.TrimEnd('\', '/') + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $f.StartsWith($nd.TrimEnd('\', '/') + '/', [System.StringComparison]::OrdinalIgnoreCase)) { $inside = $true } }
+        if ($inside) { continue }
+        $items += [pscustomobject]@{ Type = 'File'; Path = $f; Name = ''; Detail = 'Shortcut created while the program was installed'; SizeBytes = [long]0; Risk = 'LOW' }
+    }
+    $newKeys = Select-TopLevelPaths -Paths @(@($After.RegistryKeys) | Where-Object { -not $bK.Contains([string]$_) })
+    foreach ($k in $newKeys) {
+        $kn = $k -replace '^Registry::', ''
+        # Keys under Microsoft, Classes and Policies change constantly for reasons that have nothing to do with the install: not tracked.
+        if ($kn -match '(?i)\\(Microsoft|Classes|Policies)(\\|$)' -and $kn -notmatch '(?i)\\Uninstall\\') { continue }
+        $leaf = ($kn -replace '^.*\\', '').ToLower()
+        if ($Script:ProtectedLeafNames -contains $leaf) { continue }
+        $detail = 'Registry key created while the program was installed'
+        if ($kn -match '(?i)\\Uninstall\\') { $detail = 'The program''s uninstall entry' }
+        $risk = 'CHECK'; if ($kn -like 'HKEY_CURRENT_USER*') { $risk = 'LOW' }
+        $items += [pscustomobject]@{ Type = 'RegistryKey'; Path = $k; Name = ''; Detail = $detail; SizeBytes = [long]0; Risk = $risk }
+    }
+    foreach ($rv in @(@($After.RunValues) | Where-Object { -not $bR.Contains([string]$_) })) {
+        $parts = ([string]$rv) -split '\|', 2
+        if ($parts.Count -ne 2) { continue }
+        $items += [pscustomobject]@{ Type = 'RunValue'; Path = $parts[0]; Name = $parts[1]; Detail = 'Starts with Windows (created while the program was installed)'; SizeBytes = [long]0; Risk = 'LOW' }
+    }
+    $svc = @(@($After.Services) | Where-Object { -not $bS.Contains([string]$_) })
+    return [pscustomobject]@{ Items = @($items); Services = @($svc) }
+}
+
+function Start-InstallTrace {
+    # Saves the "before" snapshot so it survives closing the app.
+    param([string]$Name)
+    $nm = ([string]$Name).Trim()
+    if ($nm.Length -lt 2) { throw 'Type a name for this install (the program you are about to install).' }
+    $snap = Get-InstallSnapshot
+    $dir = Join-Path $Script:TraceDir 'pending'
+    if ($Script:DryRun) { Write-Tag INFO ("[DRY RUN] would save the before-snapshot for {0}" -f $nm); return $snap }
+    Write-JsonFile -Path (Join-Path $dir 'before.json') -Object ([ordered]@{ Name = $nm; Started = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); Snapshot = $snap })
+    Write-Log -Level INFO -Action 'TRACE_START' -Target $nm
+    return $snap
+}
+
+function Get-PendingTrace {
+    $f = Join-Path (Join-Path $Script:TraceDir 'pending') 'before.json'
+    if (-not (Test-Path -LiteralPath $f)) { return $null }
+    try { return (Read-JsonFile -Path $f) } catch { Write-Log -Level WARN -Action 'TRACE_PENDING' -Target $f -ErrorText $_.Exception.Message; return $null }
+}
+
+function Stop-InstallTrace {
+    # Throws the saved "before" snapshot away. Only ever deletes the pending folder inside the traces folder.
+    $dir = Join-Path $Script:TraceDir 'pending'
+    if ($Script:DryRun) { return }
+    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    Write-Log -Level INFO -Action 'TRACE_CANCEL'
+}
+
+function Complete-InstallTrace {
+    # Takes the "after" snapshot, compares, and saves the trace log. Returns the log folder.
+    param($Pending = $null)
+    if ($null -eq $Pending) { $Pending = Get-PendingTrace }
+    if (-not $Pending) { throw 'There is no install in progress. Start a trace first.' }
+    $after = Get-InstallSnapshot
+    $diff = Compare-InstallSnapshots -Before $Pending.Snapshot -After $after
+    $dir = Join-Path $Script:TraceDir ('{0}-{1}' -f (Get-Date -Format 'yyyy-MM-dd-HHmmss'), (ConvertTo-SafeFileName -Text ([string]$Pending.Name)))
+    if ($Script:DryRun) { Write-Tag INFO ("[DRY RUN] would save a trace log with {0} item(s)" -f @($diff.Items).Count); return [pscustomobject]@{ Dir = ''; Count = @($diff.Items).Count; Diff = $diff } }
+    Write-JsonFile -Path (Join-Path $dir 'trace.json') -Object ([ordered]@{
+        Name = [string]$Pending.Name; Started = [string]$Pending.Started; Finished = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); Version = $Script:Version
+        Items = @($diff.Items | ForEach-Object { [ordered]@{ Type = $_.Type; Path = $_.Path; Name = $_.Name; Detail = $_.Detail; Risk = $_.Risk } })
+        Services = @($diff.Services)
+    })
+    Stop-InstallTrace
+    Write-Log -Level INFO -Action 'TRACE_SAVED' -Target ([string]$Pending.Name) -Result ([string]@($diff.Items).Count)
+    return [pscustomobject]@{ Dir = $dir; Count = @($diff.Items).Count; Diff = $diff }
+}
+
+function Get-TraceLogs {
+    param([string]$Root = $Script:TraceDir)
+    $out = @()
+    if (-not (Test-Path -LiteralPath $Root)) { return @() }
+    foreach ($d in @(Get-ChildItem -LiteralPath $Root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'pending' })) {
+        $tj = Join-Path $d.FullName 'trace.json'
+        if (-not (Test-Path -LiteralPath $tj)) { continue }
+        try {
+            $t = Read-JsonFile -Path $tj
+            $out += [pscustomobject]@{ Id = $d.Name; Path = $d.FullName; Name = [string]$t.Name; Finished = [string]$t.Finished; Count = @($t.Items).Count; Trace = $t }
+        } catch { Write-Log -Level WARN -Action 'TRACE_LIST' -Target $d.FullName -ErrorText $_.Exception.Message }
+    }
+    return @($out | Sort-Object Id -Descending)
+}
+
+function Get-TraceReviewItems {
+    # Items from a log that still exist now, with sizes, marked Created or Protected (exclude list).
+    param($Log)
+    $items = @()
+    foreach ($t in @($Log.Trace.Items)) {
+        $present = $false
+        switch ([string]$t.Type) {
+            'RegistryKey' { $present = Test-Path -LiteralPath ([string]$t.Path) }
+            'RunValue' { $present = ((Test-Path -LiteralPath ([string]$t.Path)) -and ($null -ne (Get-ItemProperty -LiteralPath ([string]$t.Path) -Name ([string]$t.Name) -ErrorAction SilentlyContinue))) }
+            default { $present = Test-Path -LiteralPath ([string]$t.Path) }
+        }
+        if (-not $present) { continue }
+        if ([string]$t.Type -in @('Folder', 'File') -and -not (Test-LeftoverPathAllowed -Path ([string]$t.Path))) { continue }
+        $size = [long]0
+        if ([string]$t.Type -eq 'Folder') { $size = [long](Get-FolderStats -Path ([string]$t.Path)).Bytes }
+        $items += [pscustomobject]@{ Type = [string]$t.Type; Path = [string]$t.Path; Name = [string]$t.Name; Detail = [string]$t.Detail; SizeBytes = $size; Risk = [string]$t.Risk }
+    }
+    return @(Add-LeftoverStatus -Items @($items))
+}
+
+function Remove-TraceLog {
+    # Deletes ONLY a trace log folder that sits directly inside the traces folder and holds a trace.json.
+    param([string]$Dir, [string]$Root = $Script:TraceDir)
+    $full = [System.IO.Path]::GetFullPath($Dir).TrimEnd('\', '/')
+    $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $parent = [System.IO.Path]::GetDirectoryName($full)
+    if (-not $parent -or ($parent.TrimEnd('\', '/') -ine $rootFull)) { throw 'That folder is not inside the DIVuninstaller traces folder, so it was not deleted.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $full 'trace.json'))) { throw 'That folder has no trace log, so it was not deleted.' }
+    Write-Command ("Remove-Item -LiteralPath '{0}' -Recurse -Force" -f $full)
+    Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+    Write-Log -Level INFO -Action 'TRACE_DELETE' -Target $full
+}
+
+# ---------------------------------------------------------------
+# v0.15: custom uninstall editor for trace logs (edit, merge, export, import)
+# ---------------------------------------------------------------
+
+function Get-TraceItemKey {
+    param($Item)
+    return (('{0}|{1}|{2}' -f [string]$Item.Type, [string]$Item.Path, [string]$Item.Name).ToLower())
+}
+
+function Test-TraceDirInside {
+    # True only for a folder directly inside the traces folder that holds a trace.json.
+    param([string]$Dir, [string]$Root = $Script:TraceDir)
+    if (-not $Dir) { return $false }
+    try {
+        $full = [System.IO.Path]::GetFullPath($Dir).TrimEnd('\', '/')
+        $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+        $parent = [System.IO.Path]::GetDirectoryName($full)
+    } catch { return $false }
+    if (-not $parent -or ($parent.TrimEnd('\', '/') -ine $rootFull)) { return $false }
+    return (Test-Path -LiteralPath (Join-Path $full 'trace.json'))
+}
+
+function Get-TraceItemProblem {
+    # Returns a plain-words problem, or '' when the item may be kept in a log. The same rules apply to typed, edited and imported items.
+    param($Item)
+    $type = [string]$Item.Type
+    $path = ([string]$Item.Path).Trim()
+    if ($type -notin @('Folder', 'File', 'RegistryKey', 'RunValue')) { return 'Unknown item type.' }
+    if (-not $path) { return 'The path is empty.' }
+    if ($path -match '[\*\?<>\|]') { return 'Wildcards and special characters are not allowed in a path.' }
+    if ($type -in @('Folder', 'File')) {
+        if ($path -notmatch '^([A-Za-z]:[\\/]|\\\\)') { return 'Type a full path, for example C:\Program Files\MyApp.' }
+        if ($path -match '^[A-Za-z]:[\\/]*$') { return 'A drive root is not allowed.' }
+        if ($path -match '(^|[\\/])\.\.([\\/]|$)') { return 'Paths with .. are not allowed.' }
+        if (-not (Test-LeftoverPathAllowed -Path $path)) { return 'That path is protected (system, shared or a top-level folder).' }
+        return ''
+    }
+    $k = ConvertTo-ExcludeKey -Text $path
+    if ($k -notmatch '^(HKLM:|HKCU:)\\') { return 'Type a registry path that starts with HKLM:\ or HKCU:\.' }
+    $parts = @(($k -replace '^(HKLM:|HKCU:)\\', '') -split '\\' | Where-Object { $_ })
+    if ($parts.Count -lt 2) { return 'That registry key is too close to the root. Use a key for the program, such as HKCU:\Software\Vendor\Program.' }
+    $isRunKey = ($type -eq 'RunValue' -and $k -match '(?i)\\Microsoft\\Windows\\CurrentVersion\\Run(Once)?$')
+    if (-not $isRunKey -and $k -match '(?i)\\(Microsoft|Classes|Policies)(\\|$)' -and $k -notmatch '(?i)\\Uninstall\\') { return 'Keys under Microsoft, Classes and Policies are not handled here.' }
+    $leaf = ($k -replace '^.*\\', '').ToLower()
+    if (-not $isRunKey -and $Script:ProtectedLeafNames -contains $leaf) { return 'That registry key name is protected.' }
+    if ($type -eq 'RunValue') {
+        if (-not ([string]$Item.Name).Trim()) { return 'A startup value needs the value name.' }
+        if ($k -notmatch '(?i)\\Run(Once)?$') { return 'A startup value must be in a Run key.' }
+    }
+    return ''
+}
+
+function Read-TraceData {
+    param([string]$Dir)
+    $t = Read-JsonFile -Path (Join-Path $Dir 'trace.json')
+    $items = @()
+    foreach ($i in @($t.Items)) { $items += [ordered]@{ Type = [string]$i.Type; Path = [string]$i.Path; Name = [string]$i.Name; Detail = [string]$i.Detail; Risk = [string]$i.Risk } }
+    return [ordered]@{
+        Format = 'DIVuninstaller-trace'; Name = [string]$t.Name; Started = [string]$t.Started; Finished = [string]$t.Finished
+        Version = [string]$t.Version; Comment = [string]$t.Comment; Imported = [bool]$t.Imported
+        Items = @($items); Services = @(@($t.Services) | ForEach-Object { [string]$_ })
+    }
+}
+
+function Write-TraceData {
+    param([string]$Dir, $Data)
+    if (-not (Test-TraceDirInside -Dir $Dir)) { throw 'That is not a DIVuninstaller trace log folder.' }
+    if ($Script:DryRun) { Write-Tag INFO '[DRY RUN] would save the trace log'; return }
+    Write-JsonFile -Path (Join-Path $Dir 'trace.json') -Object $Data
+}
+
+function Set-TraceDetails {
+    param([string]$Dir, [string]$Name, [string]$Comment = '')
+    $nm = ([string]$Name).Trim()
+    if ($nm.Length -lt 2) { throw 'The name must be at least 2 characters.' }
+    if ($nm.Length -gt 80) { throw 'The name is too long (80 characters at most).' }
+    if ($Comment.Length -gt 500) { throw 'The comment is too long (500 characters at most).' }
+    $d = Read-TraceData -Dir $Dir
+    $d.Name = $nm; $d.Comment = $Comment
+    Write-TraceData -Dir $Dir -Data $d
+    Write-Log -Level INFO -Action 'TRACE_EDIT' -Target $nm -Message 'details'
+}
+
+function Add-TraceItem {
+    param([string]$Dir, [string]$Type, [string]$Path, [string]$Name = '')
+    $path = ([string]$Path).Trim()
+    if ($Type -in @('RegistryKey', 'RunValue')) { $path = ConvertTo-ExcludeKey -Text $path }
+    $item = [ordered]@{ Type = $Type; Path = $path; Name = ([string]$Name).Trim(); Detail = 'Added by hand'; Risk = 'CHECK' }
+    $problem = Get-TraceItemProblem -Item ([pscustomobject]$item)
+    if ($problem) { throw $problem }
+    $d = Read-TraceData -Dir $Dir
+    $key = Get-TraceItemKey -Item ([pscustomobject]$item)
+    if (@($d.Items | Where-Object { (Get-TraceItemKey -Item ([pscustomobject]$_)) -eq $key }).Count -gt 0) { throw 'That item is already in the log.' }
+    $d.Items = @($d.Items) + @($item)
+    Write-TraceData -Dir $Dir -Data $d
+    Write-Log -Level INFO -Action 'TRACE_EDIT' -Target $path -Message 'item added'
+}
+
+function Remove-TraceItems {
+    # Removes entries from the LOG only. Nothing on the PC is touched.
+    param([string]$Dir, $Items)
+    $keys = @(@($Items) | ForEach-Object { Get-TraceItemKey -Item $_ })
+    if ($keys.Count -eq 0) { throw 'Select at least one item.' }
+    $d = Read-TraceData -Dir $Dir
+    $before = @($d.Items).Count
+    $d.Items = @(@($d.Items) | Where-Object { $keys -notcontains (Get-TraceItemKey -Item ([pscustomobject]$_)) })
+    Write-TraceData -Dir $Dir -Data $d
+    Write-Log -Level INFO -Action 'TRACE_EDIT' -Target $d.Name -Message ('{0} item(s) removed from the log' -f ($before - @($d.Items).Count))
+    return ($before - @($d.Items).Count)
+}
+
+function New-TraceLogFolder {
+    param([string]$Name)
+    return (Join-Path $Script:TraceDir ('{0}-{1}' -f (Get-Date -Format 'yyyy-MM-dd-HHmmss'), (ConvertTo-SafeFileName -Text $Name)))
+}
+
+function Merge-TraceLogs {
+    # Makes a NEW log from the union of the chosen logs. The originals are kept.
+    param($Dirs, [string]$Name)
+    $dirs = @($Dirs)
+    if ($dirs.Count -lt 2) { throw 'Select at least two logs to merge.' }
+    foreach ($x in $dirs) { if (-not (Test-TraceDirInside -Dir $x)) { throw 'One of the selected folders is not a DIVuninstaller trace log.' } }
+    $nm = ([string]$Name).Trim()
+    if ($nm.Length -lt 2) { throw 'Type a name for the merged log.' }
+    $seen = @{}; $items = @(); $svc = @()
+    foreach ($x in $dirs) {
+        $d = Read-TraceData -Dir $x
+        foreach ($i in @($d.Items)) {
+            $k = Get-TraceItemKey -Item ([pscustomobject]$i)
+            if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; $items += $i }
+        }
+        foreach ($s in @($d.Services)) { if ($svc -notcontains $s) { $svc += $s } }
+    }
+    $out = New-TraceLogFolder -Name $nm
+    if ($Script:DryRun) { Write-Tag INFO ("[DRY RUN] would save a merged log with {0} item(s)" -f $items.Count); return '' }
+    $data = [ordered]@{
+        Format = 'DIVuninstaller-trace'; Name = $nm; Started = ''; Finished = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); Version = $Script:Version
+        Comment = ('Merged from {0} logs' -f $dirs.Count); Imported = $false; Items = @($items); Services = @($svc)
+    }
+    Write-JsonFile -Path (Join-Path $out 'trace.json') -Object $data
+    Write-Log -Level INFO -Action 'TRACE_MERGE' -Target $nm -Result ([string]$items.Count)
+    return $out
+}
+
+function Export-TraceLog {
+    # Writes a copy of the log to a .json file you choose. Never overwrites an existing file.
+    param([string]$Dir, [string]$Destination)
+    if (-not (Test-TraceDirInside -Dir $Dir)) { throw 'That is not a DIVuninstaller trace log folder.' }
+    $dest = ([string]$Destination).Trim()
+    if (-not $dest) { throw 'Choose where to save the file.' }
+    if ($dest -notmatch '\.json$') { throw 'The file name must end in .json.' }
+    if (Test-Path -LiteralPath $dest) { throw 'A file with that name already exists. Choose another name.' }
+    if ($Script:DryRun) { Write-Tag INFO ("[DRY RUN] would export the log to {0}" -f $dest); return }
+    $d = Read-TraceData -Dir $Dir
+    Write-JsonFile -Path $dest -Object $d
+    Write-Log -Level INFO -Action 'TRACE_EXPORT' -Target $dest
+}
+
+function Import-TraceLog {
+    # Reads a log file from anywhere, keeps only items that pass the same checks as typed items, and saves a NEW log.
+    param([string]$Source)
+    $src = ([string]$Source).Trim()
+    if (-not $src -or -not (Test-Path -LiteralPath $src -PathType Leaf)) { throw 'That file was not found.' }
+    if ((Get-Item -LiteralPath $src).Length -gt 5MB) { throw 'That file is too large to be a trace log (5 MB limit).' }
+    try { $t = Read-JsonFile -Path $src } catch { throw 'That file is not valid JSON.' }
+    if (-not $t.Name -or $null -eq $t.Items) { throw 'That file is not a DIVuninstaller trace log.' }
+    $all = @($t.Items)
+    if ($all.Count -gt 20000) { throw 'That log has too many items (20000 limit).' }
+    $good = @(); $skipped = 0
+    foreach ($i in $all) {
+        $it = [ordered]@{ Type = [string]$i.Type; Path = [string]$i.Path; Name = [string]$i.Name; Detail = [string]$i.Detail; Risk = 'CHECK' }
+        if ($it.Type -in @('RegistryKey', 'RunValue')) { $it.Path = ConvertTo-ExcludeKey -Text $it.Path }
+        if (Get-TraceItemProblem -Item ([pscustomobject]$it)) { $skipped++; continue }
+        $good += $it
+    }
+    if ($good.Count -eq 0) { throw 'None of the items in that file passed the safety checks, so nothing was imported.' }
+    $nm = ([string]$t.Name).Trim(); if ($nm.Length -gt 80) { $nm = $nm.Substring(0, 80) }
+    $out = New-TraceLogFolder -Name $nm
+    if ($Script:DryRun) { Write-Tag INFO ("[DRY RUN] would import {0} item(s)" -f $good.Count); return [pscustomobject]@{ Dir = ''; Imported = $good.Count; Skipped = $skipped } }
+    $data = [ordered]@{
+        Format = 'DIVuninstaller-trace'; Name = $nm; Started = [string]$t.Started; Finished = [string]$t.Finished; Version = $Script:Version
+        Comment = ('Imported from a file. {0} item(s) skipped by the safety checks.' -f $skipped); Imported = $true; Items = @($good); Services = @()
+    }
+    Write-JsonFile -Path (Join-Path $out 'trace.json') -Object $data
+    Write-Log -Level INFO -Action 'TRACE_IMPORT' -Target $nm -Result ('{0} imported, {1} skipped' -f $good.Count, $skipped)
+    return [pscustomobject]@{ Dir = $out; Imported = $good.Count; Skipped = $skipped }
+}
+
+# ---------------------------------------------------------------
+# JUNK CLEANER (v0.16). Moves old temporary files to quarantine. Nothing is selected for you.
+# Never touched: Recycle Bin, Downloads, Documents, Desktop, browser history/cookies/passwords, anything outside the folders below.
+# ---------------------------------------------------------------
+
+$Script:JunkMinAgeHours = 24
+$Script:JunkMaxUnits = 5000
+$Script:JunkRootLeafs = @('temp', 'crashdumps', 'minidump', 'reportarchive', 'reportqueue', 'explorer', 'cache', 'code cache', 'gpucache', 'cache2')
+
+function Test-BrowserRunning {
+    param([string]$Browser)
+    $names = switch ($Browser) { 'Chrome' { @('chrome') } 'Edge' { @('msedge') } 'Brave' { @('brave') } 'Firefox' { @('firefox') } default { @() } }
+    foreach ($n in $names) { if (@(Get-Process -Name $n -ErrorAction SilentlyContinue).Count -gt 0) { return $true } }
+    return $false
+}
+
+function New-JunkRoot {
+    param([string]$Path, [string]$Mode = 'Children', [string]$Filter = '*', [bool]$Admin = $false, [string]$Browser = '')
+    return [pscustomobject]@{ Path = $Path; Mode = $Mode; Filter = $Filter; Admin = $Admin; Browser = $Browser }
+}
+
+function Join-JunkPath {
+    param([string]$Base, [string]$Child)
+    if (-not $Base) { return '' }
+    return (Join-Path $Base $Child)
+}
+
+function Get-JunkCategories {
+    $win = $env:SystemRoot
+    $la = $env:LOCALAPPDATA
+    $pd = $env:ProgramData
+    $cats = @()
+    $cats += [pscustomobject]@{ Key = 'UserTemp'; Name = 'User temp files'; Note = 'Files in your temp folder that have not changed for 24 hours.'
+        Roots = @((New-JunkRoot -Path $env:TEMP)) }
+    $cats += [pscustomobject]@{ Key = 'WindowsTemp'; Name = 'Windows temp files'; Note = 'Old files in the Windows temp folder. Needs Administrator.'
+        Roots = @((New-JunkRoot -Path (Join-JunkPath $win 'Temp') -Admin $true)) }
+    $cats += [pscustomobject]@{ Key = 'CrashDumps'; Name = 'Crash dumps'; Note = 'Old .dmp files from crashed programs. Keep them if you are chasing a crash.'
+        Roots = @((New-JunkRoot -Path (Join-JunkPath $la 'CrashDumps') -Mode 'Files' -Filter '*.dmp'), (New-JunkRoot -Path (Join-JunkPath $win 'Minidump') -Mode 'Files' -Filter '*.dmp' -Admin $true)) }
+    $cats += [pscustomobject]@{ Key = 'ErrorReports'; Name = 'Windows error reports'; Note = 'Old Windows Error Reporting archives and queue. Newer reports are kept.'
+        Roots = @((New-JunkRoot -Path (Join-JunkPath $la 'Microsoft\Windows\WER\ReportArchive')), (New-JunkRoot -Path (Join-JunkPath $la 'Microsoft\Windows\WER\ReportQueue')),
+                  (New-JunkRoot -Path (Join-JunkPath $pd 'Microsoft\Windows\WER\ReportArchive') -Admin $true), (New-JunkRoot -Path (Join-JunkPath $pd 'Microsoft\Windows\WER\ReportQueue') -Admin $true)) }
+    $cats += [pscustomobject]@{ Key = 'Thumbnails'; Name = 'Thumbnail cache'; Note = 'Explorer rebuilds it. Some files may be in use and are skipped.'
+        Roots = @((New-JunkRoot -Path (Join-JunkPath $la 'Microsoft\Windows\Explorer') -Mode 'Files' -Filter 'thumbcache_*.db')) }
+    $br = @()
+    $chromium = @(
+        @{ B = 'Chrome'; P = (Join-JunkPath $la 'Google\Chrome\User Data') },
+        @{ B = 'Edge'; P = (Join-JunkPath $la 'Microsoft\Edge\User Data') },
+        @{ B = 'Brave'; P = (Join-JunkPath $la 'BraveSoftware\Brave-Browser\User Data') }
+    )
+    foreach ($c in $chromium) {
+        if (-not $c.P -or -not (Test-Path -LiteralPath $c.P)) { continue }
+        foreach ($prof in @(Get-ChildItem -LiteralPath $c.P -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' })) {
+            foreach ($sub in @('Cache', 'Code Cache', 'GPUCache')) {
+                $br += (New-JunkRoot -Path (Join-Path $prof.FullName $sub) -Mode 'Roots' -Browser $c.B)
+            }
+        }
+    }
+    $ffp = Join-JunkPath $la 'Mozilla\Firefox\Profiles'
+    if ($ffp -and (Test-Path -LiteralPath $ffp)) {
+        foreach ($prof in @(Get-ChildItem -LiteralPath $ffp -Directory -Force -ErrorAction SilentlyContinue)) {
+            $br += (New-JunkRoot -Path (Join-Path $prof.FullName 'cache2') -Mode 'Roots' -Browser 'Firefox')
+        }
+    }
+    $cats += [pscustomobject]@{ Key = 'BrowserCache'; Name = 'Browser caches'; Note = 'Cached web files only (Chrome, Edge, Brave, Firefox). History, cookies, passwords and sign-ins are not touched. The browser must be closed. Pages may load a little slower once.'
+        Roots = @($br) }
+    return @($cats)
+}
+
+function Test-JunkRootSane {
+    # A root must be a real folder path (not a drive root, not a profile or system root) whose name is one of the known junk folder names.
+    param([string]$Path)
+    if (-not $Path) { return $false }
+    try { $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/') } catch { return $false }
+    if ($full.Length -le 10) { return $false }
+    if ($Path -match '(^|[\\/])\.\.([\\/]|$)') { return $false }
+    foreach ($r in @($env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, $env:USERPROFILE, $env:LOCALAPPDATA, $env:APPDATA, $env:SystemDrive)) {
+        if ($r -and ($full -ieq $r.TrimEnd('\', '/'))) { return $false }
+    }
+    $leaf = (Split-Path -Leaf $full).ToLower()
+    return ($Script:JunkRootLeafs -contains $leaf)
+}
+
+function Test-JunkPathAllowed {
+    # The item must be exactly the root (Roots mode) or a direct child of the root (Children and Files mode).
+    param([string]$Path, $Root)
+    if (-not (Test-JunkRootSane -Path $Root.Path)) { return $false }
+    if ($Path -match '(^|[\\/])\.\.([\\/]|$)') { return $false }
+    try {
+        $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+        $rootFull = [System.IO.Path]::GetFullPath([string]$Root.Path).TrimEnd('\', '/')
+        $parent = [System.IO.Path]::GetDirectoryName($full)
+    } catch { return $false }
+    if ($Root.Mode -eq 'Roots') { return ($full -ieq $rootFull) }
+    if (-not $parent) { return $false }
+    return ($parent.TrimEnd('\', '/') -ieq $rootFull)
+}
+
+function Test-IsReparsePoint {
+    param($Item)
+    return (([int]$Item.Attributes -band [int][System.IO.FileAttributes]::ReparsePoint) -ne 0)
+}
+
+function Get-JunkNewestTime {
+    # Newest write time of a file, or of anything inside a folder.
+    param($Item)
+    $t = $Item.LastWriteTime
+    if ($Item.PSIsContainer) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $Item.FullName -Recurse -File -Force -ErrorAction SilentlyContinue)) { if ($f.LastWriteTime -gt $t) { $t = $f.LastWriteTime } }
+    }
+    return $t
+}
+
+function Get-JunkUnits {
+    param($Category, [int]$MinAgeHours = $Script:JunkMinAgeHours)
+    $cutoff = (Get-Date).AddHours(-$MinAgeHours)
+    $units = New-Object System.Collections.Generic.List[object]
+    $blocked = @(); $recent = 0; $truncated = $false
+    $isAdmin = Test-Administrator
+    $browsersChecked = @{}
+    foreach ($root in @($Category.Roots)) {
+        if ($root.Admin -and -not $isAdmin) { $m = 'Needs Administrator: ' + $root.Path; if ($blocked -notcontains $m) { $blocked += $m }; continue }
+        if ($root.Browser) {
+            if (-not $browsersChecked.ContainsKey($root.Browser)) { $browsersChecked[$root.Browser] = (Test-BrowserRunning -Browser $root.Browser) }
+            if ($browsersChecked[$root.Browser]) { $m = ('{0} is running. Close it first.' -f $root.Browser); if ($blocked -notcontains $m) { $blocked += $m }; continue }
+        }
+        if (-not $root.Path -or -not (Test-Path -LiteralPath $root.Path)) { continue }
+        if (-not (Test-JunkRootSane -Path $root.Path)) { $blocked += ('Folder not allowed: ' + $root.Path); continue }
+        if ($root.Mode -eq 'Roots') {
+            $it = Get-Item -LiteralPath $root.Path -Force -ErrorAction SilentlyContinue
+            if (-not $it -or -not $it.PSIsContainer -or (Test-IsReparsePoint -Item $it)) { continue }
+            $st = Get-FolderStats -Path $root.Path
+            if ($st.Files -eq 0) { continue }
+            $units.Add([pscustomobject]@{ Category = $Category.Key; Type = 'Folder'; Path = $it.FullName; Name = $it.Name; Bytes = [long]$st.Bytes; Files = [int]$st.Files; Newest = $it.LastWriteTime; Root = $root })
+            continue
+        }
+        foreach ($c in @(Get-ChildItem -LiteralPath $root.Path -Force -ErrorAction SilentlyContinue)) {
+            if (Test-IsReparsePoint -Item $c) { continue }
+            if ($c.PSIsContainer) { if ($root.Mode -eq 'Files') { continue } }
+            elseif ($c.Name -notlike $root.Filter) { continue }
+            if ($units.Count -ge $Script:JunkMaxUnits) { $truncated = $true; break }
+            $newest = Get-JunkNewestTime -Item $c
+            if ($newest -gt $cutoff) { $recent++; continue }
+            $bytes = [long]0; $files = 1
+            if ($c.PSIsContainer) { $st = Get-FolderStats -Path $c.FullName; $bytes = [long]$st.Bytes; $files = [int]$st.Files } else { $bytes = [long]$c.Length }
+            $units.Add([pscustomobject]@{ Category = $Category.Key; Type = $(if ($c.PSIsContainer) { 'Folder' } else { 'File' }); Path = $c.FullName; Name = $c.Name; Bytes = $bytes; Files = $files; Newest = $newest; Root = $root })
+        }
+    }
+    return [pscustomobject]@{ Units = @($units.ToArray()); RecentSkipped = $recent; Blocked = @($blocked); Truncated = $truncated }
+}
+
+function Get-JunkScan {
+    # Read-only. One row per category with sizes.
+    param($Categories = $null, [int]$MinAgeHours = $Script:JunkMinAgeHours)
+    if ($null -eq $Categories) { $Categories = @(Get-JunkCategories) }
+    $rows = @(); $k = 0
+    foreach ($c in @($Categories)) {
+        Write-Busy -Activity 'Looking for junk (read-only)' -Status $c.Name -Percent ([int](100 * $k / [math]::Max(1, @($Categories).Count)))
+        $k++
+        $u = Get-JunkUnits -Category $c -MinAgeHours $MinAgeHours
+        $sum = [long]0; $files = 0
+        foreach ($x in @($u.Units)) { $sum += [long]$x.Bytes; $files += [int]$x.Files }
+        $rows += [pscustomobject]@{ Category = $c; Key = $c.Key; Name = $c.Name; Note = $c.Note; Units = @($u.Units); Bytes = $sum; Files = $files; RecentSkipped = $u.RecentSkipped; Blocked = @($u.Blocked); Truncated = $u.Truncated }
+    }
+    Write-Busy -Activity 'Looking for junk (read-only)' -Status 'Done' -Percent 100
+    return @($rows)
+}
+
+function Move-JunkToQuarantine {
+    # Every unit is checked again right before it is moved. -Permanent deletes the quarantine entry afterwards (cannot be undone).
+    param($Category, $Units, [switch]$Permanent, [string]$QuarantineRoot = $Script:QuarantineDir, [int]$MinAgeHours = $Script:JunkMinAgeHours)
+    $stamp = Get-Date -Format 'yyyy-MM-dd-HHmmss'
+    $dir = Join-Path $QuarantineRoot ('{0}-{1}' -f $stamp, (ConvertTo-SafeFileName -Text ('Junk cleaner - ' + $Category.Name)))
+    if ($Script:DryRun) {
+        foreach ($u in @($Units)) { Write-Tag INFO ("[DRY RUN] would quarantine {0}: {1}" -f $u.Type, $u.Path) }
+        return [pscustomobject]@{ Dir = ''; Moved = 0; Failed = 0; Bytes = [long]0; Permanent = $false; Results = @() }
+    }
+    New-Item -ItemType Directory -Path (Join-Path $dir 'files') -Force | Out-Null
+    $cutoff = (Get-Date).AddHours(-$MinAgeHours)
+    $excl = @(Get-ExcludeList)
+    $entries = New-Object System.Collections.Generic.List[object]
+    $moved = 0; $failed = 0; $n = 0; $bytes = [long]0
+    $browserRun = @{}
+    foreach ($u in @($Units)) {
+        $n++
+        $e = [ordered]@{ Type = $u.Type; Path = $u.Path; Name = ''; QuarantinePath = ''; Result = 'failed'; Note = '' }
+        try {
+            if (-not (Test-JunkPathAllowed -Path $u.Path -Root $u.Root)) { throw 'This path is not in a junk folder, so it was not touched.' }
+            if (Test-LeftoverExcluded -Path $u.Path -Name '' -Patterns $excl) { throw 'It is on the exclude list, so it was left alone.' }
+            if ($u.Root.Admin -and -not (Test-Administrator)) { throw 'Needs Administrator.' }
+            if ($u.Root.Browser) {
+                if (-not $browserRun.ContainsKey($u.Root.Browser)) { $browserRun[$u.Root.Browser] = (Test-BrowserRunning -Browser $u.Root.Browser) }
+                if ($browserRun[$u.Root.Browser]) { throw ('{0} is running. Close it first.' -f $u.Root.Browser) }
+            }
+            $it = Get-Item -LiteralPath $u.Path -Force -ErrorAction Stop
+            if (Test-IsReparsePoint -Item $it) { throw 'It is a link, so it was left alone.' }
+            if ($u.Root.Mode -ne 'Roots' -and (Get-JunkNewestTime -Item $it) -gt $cutoff) { throw 'It changed in the last 24 hours, so it was kept.' }
+            $dest = Join-Path (Join-Path $dir 'files') ('{0:D4}_{1}' -f $n, (ConvertTo-SafeFileName -Text (Split-Path -Leaf $u.Path)))
+            if (($n % 25) -eq 1) { Write-Command ("Move-Item -LiteralPath '{0}' -Destination '{1}'" -f $u.Path, $dest) }
+            Move-Item -LiteralPath $u.Path -Destination $dest -ErrorAction Stop
+            $e.QuarantinePath = $dest; $e.Result = 'moved'
+            $moved++; $bytes += [long]$u.Bytes
+        } catch {
+            $failed++
+            $e.Note = $_.Exception.Message
+        }
+        if (($n % 50) -eq 0) { Write-Busy -Activity ('Moving ' + $Category.Name) -Status ('{0} moved, {1} skipped' -f $moved, $failed) }
+        $entries.Add([pscustomobject]$e)
+    }
+    Write-Log -Level INFO -Action 'JUNK_MOVE' -Target $Category.Name -Result ('{0} moved, {1} skipped' -f $moved, $failed)
+    Write-JsonFile -Path (Join-Path $dir 'manifest.json') -Object ([ordered]@{
+        Program = ('Junk cleaner: ' + $Category.Name); Created = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); Version = $Script:Version; Entries = @($entries.ToArray())
+    })
+    $deleted = $false
+    if ($Permanent) {
+        if ($moved -gt 0) { Remove-QuarantineFolder -Dir $dir -Root $QuarantineRoot; $deleted = $true }
+        else { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    } elseif ($moved -eq 0) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    return [pscustomobject]@{ Dir = $(if ($deleted -or $moved -eq 0) { '' } else { $dir }); Moved = $moved; Failed = $failed; Bytes = $bytes; Permanent = $deleted; Results = @($entries.ToArray()) }
+}
+
+function Get-QuarantineList {
+    param([string]$Root = $Script:QuarantineDir)
+    $out = @()
+    if (-not (Test-Path -LiteralPath $Root)) { return @() }
+    foreach ($d in @(Get-ChildItem -LiteralPath $Root -Directory -ErrorAction SilentlyContinue)) {
+        $mf = Join-Path $d.FullName 'manifest.json'
+        if (-not (Test-Path -LiteralPath $mf)) { continue }
+        try {
+            $m = Read-JsonFile -Path $mf
+            $size = (Get-ChildItem -LiteralPath $d.FullName -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+            if (-not $size) { $size = 0 }
+            $out += [pscustomobject]@{ Id = $d.Name; Path = $d.FullName; Program = [string]$m.Program; Created = [string]$m.Created; Count = @($m.Entries | Where-Object { $_.Result -eq 'moved' }).Count; SizeBytes = [long]$size; Manifest = $m }
+        } catch { Write-Log -Level WARN -Action 'QUARANTINE_LIST' -Target $d.FullName -ErrorText $_.Exception.Message }
+    }
+    return @($out | Sort-Object Id -Descending)
+}
+
+function Remove-QuarantineFolder {
+    # PERMANENT. Only ever deletes a folder that sits directly inside the quarantine folder.
+    param([string]$Dir, [string]$Root = $Script:QuarantineDir)
+    $full = [System.IO.Path]::GetFullPath($Dir).TrimEnd('\', '/')
+    $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $parent = [System.IO.Path]::GetDirectoryName($full)
+    if (-not $parent -or ($parent.TrimEnd('\', '/') -ine $rootFull)) { throw 'That folder is not inside the DIVuninstaller quarantine, so it was not deleted.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $full 'manifest.json'))) { throw 'That folder has no quarantine manifest, so it was not deleted.' }
+    Write-Command ("Remove-Item -LiteralPath '{0}' -Recurse -Force" -f $full)
+    Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+    Write-Log -Level INFO -Action 'QUARANTINE_DELETE' -Target $full
+}
+
+function Update-GuiProgramList {
+    param([string]$Filter = '')
+    $lb = $Script:GuiProgList
+    $lb.Items.Clear()
+    $all = @($Script:GuiProgAll)
+    switch ([string]$Script:GuiProgSort) {
+        'Size'      { $all = @($all | Sort-Object -Property SizeKB -Descending) }
+        'Installed' { $all = @($all | Sort-Object -Property @{ Expression = { if ($_.InstallDate -match '^\d{8}$') { $_.InstallDate } else { '00000000' } } } -Descending) }
+        'Publisher' { $all = @($all | Sort-Object -Property Publisher, Name) }
+        default     { $all = @($all | Sort-Object -Property Name) }
+    }
+    $shown = 0
+    foreach ($p in $all) {
+        if ($Filter -and ($p.Name -notlike ('*' + $Filter + '*')) -and ($p.Publisher -notlike ('*' + $Filter + '*'))) { continue }
+        $item = New-Object System.Windows.Controls.ListBoxItem
+        $sz = ''
+        if ($p.SizeKB -gt 0) { $sz = Format-Bytes ([double]$p.SizeKB * 1024) }
+        $tag = ''
+        if ($p.Protected) { $tag = '   [protected]' }
+        $item.Content = ("{0}    {1}    {2}    {3}{4}" -f $p.Name, $p.Version, $p.Publisher, $sz, $tag)
+        $item.Tag = $p
+        [void]$lb.Items.Add($item)
+        $shown++
+    }
+    Set-GuiStatus ("{0} program(s) shown. Protected programs cannot be uninstalled here." -f $shown)
+}
+
+function Get-GuiScanModeKey {
+    if ((Get-UninstallerSettings).OnlyBuiltIn) { return 'None' }
+    switch -Wildcard ([string]$Script:GuiUninstallMode) {
+        'Built-in*' { return 'None' }
+        'Safe*'     { return 'Safe' }
+        'Advanced*' { return 'Advanced' }
+        default     { return 'Moderate' }
+    }
+}
+
+function Start-GuiLeftoverStage {
+    # After an uninstall (or a forced removal): scan at the chosen level and show the result.
+    param($Program, [string]$Mode, [string]$RecordDir, $Others)
+    if ($Mode -eq 'None') {
+        Update-UninstallRecord -Dir $RecordDir -Values @{ Mode = 'Built-in'; LeftoversFound = 0; LeftoversMoved = 0 }
+        Show-GuiMessage 'The uninstaller finished. Built-in mode does not scan for leftovers.' 'DIVuninstaller'
+        Show-GuiUninstaller
+        return
+    }
+    $left = @(Invoke-GuiWithBusy -Title 'Looking for leftovers' -Detail ("Scan level: {0}. Checking by exact name. Nothing is changed." -f $Mode) -Action { Get-ProgramLeftovers -Program $Program -OtherPrograms $Others -Mode $Mode })
+    Update-UninstallRecord -Dir $RecordDir -Values @{ Mode = $Mode; LeftoversFound = $left.Count }
+    Show-GuiLeftovers -Program $Program -Items $left -OtherPrograms $Others -RecordDir $RecordDir -Mode $Mode
+}
+
+function Show-GuiUninstaller {
+    Reset-GuiPage -Title 'DIVuninstaller' -Subtitle 'Uninstall a program with its own uninstaller, then clear what it leaves behind. Nothing is removed without your approval.'
+    if (-not $Script:GuiUninstallMode) { $Script:GuiUninstallMode = 'Moderate' }
+    if (-not $Script:GuiProgSort) { $Script:GuiProgSort = 'Name' }
+    $Script:GuiProgAll = @(Invoke-GuiWithBusy -Title 'Reading installed programs' -Detail 'Reading the list Windows keeps. This does not change anything.' -Action { Get-InstalledPrograms })
+
+    $row = New-Object System.Windows.Controls.WrapPanel
+    $box = New-Object System.Windows.Controls.TextBox
+    $box.Width = 300; $box.Margin = '0,0,10,8'; $box.Padding = '8,6'
+    $box.Background = (Get-GuiBrush '#131D33'); $box.Foreground = (Get-GuiBrush '#E8EEF8'); $box.BorderBrush = (Get-GuiBrush '#25324D')
+    $box.ToolTip = 'Type to filter by name or publisher'
+    $Script:GuiProgFilter = $box
+    Add-GuiChild $row $box
+    $sortLbl = New-GuiText -Text 'Sort by' -Size 11 -Color '#8DA0BF' -Margin '6,6,6,0'
+    Add-GuiChild $row $sortLbl
+    $sortCmb = New-Object System.Windows.Controls.ComboBox
+    $sortCmb.Width = 120; $sortCmb.Margin = '0,0,10,8'
+    foreach ($v in @('Name', 'Size', 'Installed', 'Publisher')) { [void]$sortCmb.Items.Add($v) }
+    $sortCmb.SelectedItem = [string]$Script:GuiProgSort
+    Add-GuiChild $row $sortCmb
+    Add-GuiChild $Script:GuiContent $row
+
+    $lb = New-Object System.Windows.Controls.ListBox
+    $lb.Height = 300
+    $lb.SelectionMode = 'Extended'
+    $lb.Background = (Get-GuiBrush '#131D33'); $lb.Foreground = (Get-GuiBrush '#E8EEF8')
+    $Script:GuiProgList = $lb
+    Add-GuiChild $Script:GuiContent $lb
+
+    $det = New-GuiText -Text 'Select a program to see its details. Hold Ctrl or Shift to select several and uninstall them in one go.' -Size 12 -Color '#8DA0BF' -Margin '0,8,0,0'
+    $Script:GuiProgDetails = $det
+    Add-GuiChild $Script:GuiContent $det
+    $lb.Add_SelectionChanged({
+        $it = $Script:GuiProgList.SelectedItem
+        $cnt = @($Script:GuiProgList.SelectedItems).Count
+        if ($cnt -gt 1) { $Script:GuiProgDetails.Text = ('{0} programs selected. UNINSTALL removes them one after another with ONE restore point.' -f $cnt) }
+        elseif ($it) { $Script:GuiProgDetails.Text = (Get-ProgramDetailsText -Program $it.Tag) } else { $Script:GuiProgDetails.Text = 'Select a program to see its details.' }
+    })
+    $box.Add_TextChanged({ Update-GuiProgramList -Filter ([string]$Script:GuiProgFilter.Text) })
+    $sortCmb.Add_SelectionChanged({ param($s, $e) $Script:GuiProgSort = [string]$s.SelectedItem; Update-GuiProgramList -Filter ([string]$Script:GuiProgFilter.Text) })
+    Update-GuiProgramList -Filter ''
+
+    $modeRow = New-Object System.Windows.Controls.WrapPanel
+    $modeRow.Margin = '0,10,0,0'
+    Add-GuiChild $modeRow (New-GuiText -Text 'Leftover scan level' -Size 12 -Color '#8DA0BF' -Margin '0,6,10,0')
+    $modeCmb = New-Object System.Windows.Controls.ComboBox
+    $modeCmb.Width = 200
+    foreach ($v in @('Built-in (no scan)', 'Safe', 'Moderate', 'Advanced')) { [void]$modeCmb.Items.Add($v) }
+    foreach ($v in @($modeCmb.Items)) { if (([string]$v) -like ($Script:GuiUninstallMode + '*')) { $modeCmb.SelectedItem = $v } }
+    if (-not $modeCmb.SelectedItem) { $modeCmb.SelectedItem = 'Moderate' }
+    Add-GuiChild $modeRow $modeCmb
+    Add-GuiChild $Script:GuiContent $modeRow
+    $modeTxt = New-GuiText -Text (Get-ScanModeDescription -Mode (Get-GuiScanModeKey)) -Size 11 -Color '#6F82A3' -Margin '0,4,0,0'
+    $Script:GuiModeText = $modeTxt
+    Add-GuiChild $Script:GuiContent $modeTxt
+    $modeCmb.Add_SelectionChanged({ param($s, $e) $Script:GuiUninstallMode = [string]$s.SelectedItem; $Script:GuiModeText.Text = (Get-ScanModeDescription -Mode (Get-GuiScanModeKey)) })
+
+    $bar = New-Object System.Windows.Controls.WrapPanel
+    $bar.Margin = '0,10,0,0'
+    Add-GuiChild $bar (New-GuiButton -Text 'UNINSTALL' -Bg '#238636' -OnClick {
+        $multi = @($Script:GuiProgList.SelectedItems)
+        if ($multi.Count -gt 1) { Start-GuiBatchUninstall -Selected $multi; return }
+        $it = $Script:GuiProgList.SelectedItem
+        if (-not $it) { Show-GuiMessage 'Select a program first.'; return }
+        $p = $it.Tag
+        if ($p.Protected) { Show-GuiMessage ("{0} is a protected program (system, runtime, driver or security software).`n`nUse Windows Settings > Apps if you really want to remove it." -f $p.Name) 'Protected' 'Warning'; return }
+        $cmd = Split-UninstallCommand -Text $p.UninstallString
+        if (-not $cmd) { Show-GuiMessage ("The uninstall command for {0} could not be read safely, so nothing was run.`n`nIf the uninstaller is missing or broken, use FORCED UNINSTALL." -f $p.Name) 'DIVuninstaller' 'Warning'; return }
+        $mode = Get-GuiScanModeKey
+        $txt = "Uninstall {0} {1}?`n`nDIVuninstaller will:`n 1. Create a restore point (if Windows allows it)`n 2. Back up the program's registry entry`n 3. Run the program's own uninstaller (it may open its own windows)`n 4. {2}`n`nNothing is deleted without your approval.`n`nCommand that will run:`n{3} {4}" -f $p.Name, $p.Version, $(if ($mode -eq 'None') { 'Stop (Built-in mode: no leftover scan)' } else { 'Scan for leftovers (' + $mode + ') and show them to you' }), $cmd.File, $cmd.Arguments
+        if (-not (Confirm-Gui $txt 'Confirm uninstall' 'Warning')) { return }
+        try {
+            $r = Invoke-GuiWithBusy -Title ('Uninstalling ' + $p.Name) -Detail 'Finish the uninstaller window that opened. DIVuninstaller continues when it closes.' -Action { Invoke-ProgramUninstall -Program $p }
+        } catch {
+            Write-Log -Level FAIL -Action 'UNINSTALL' -Target $p.Name -ErrorText $_.Exception.Message
+            Show-GuiMessage $_.Exception.Message 'Uninstall failed' 'Error'
+            return
+        }
+        if ($r.StillInstalled) {
+            Update-UninstallRecord -Dir $r.BackupDir -Values @{ Mode = $mode; LeftoversFound = 0; LeftoversMoved = 0 }
+            Show-GuiMessage ("{0} still appears to be installed (the uninstaller returned {1}). It may have been cancelled.`n`nLeftovers are only scanned once the program is gone. If the uninstaller is broken, use FORCED UNINSTALL." -f $p.Name, $r.ExitCode) 'DIVuninstaller' 'Warning'
+            Show-GuiUninstaller
+            return
+        }
+        $others = @($Script:GuiProgAll | Where-Object { $_.KeyPath -ne $p.KeyPath })
+        Start-GuiLeftoverStage -Program $p -Mode $mode -RecordDir $r.BackupDir -Others $others
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'FORCED UNINSTALL' -OnClick {
+        $it = $Script:GuiProgList.SelectedItem
+        if (-not $it) { Show-GuiMessage 'Select a program first.'; return }
+        $p = $it.Tag
+        if ($p.Protected) { Show-GuiMessage ("{0} is a protected program and cannot be removed here." -f $p.Name) 'Protected' 'Warning'; return }
+        $txt = "Forced uninstall of {0}?`n`nUse this only when the program's own uninstaller is missing or broken.`n`nDIVuninstaller will NOT run the program's uninstaller. It will:`n 1. Create a restore point (if Windows allows it)`n 2. Back up the program's registry entry`n 3. Scan at the Advanced level and show everything it finds, including the program's own uninstall entry`n`nNothing is selected for you, and nothing is deleted until you choose it." -f $p.Name
+        if (-not (Confirm-Gui $txt 'Confirm forced uninstall' 'Warning')) { return }
+        try {
+            $r = Invoke-GuiWithBusy -Title 'Preparing forced uninstall' -Detail 'Creating a restore point and backing up the program entry...' -Action { Invoke-ProgramUninstall -Program $p -SkipUninstaller }
+        } catch {
+            Write-Log -Level FAIL -Action 'FORCED_UNINSTALL' -Target $p.Name -ErrorText $_.Exception.Message
+            Show-GuiMessage $_.Exception.Message 'Forced uninstall failed' 'Error'
+            return
+        }
+        $others = @($Script:GuiProgAll | Where-Object { $_.KeyPath -ne $p.KeyPath })
+        Start-GuiLeftoverStage -Program $p -Mode 'Advanced' -RecordDir $r.BackupDir -Others $others
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'OPEN FOLDER' -OnClick {
+        $it = $Script:GuiProgList.SelectedItem
+        if (-not $it) { Show-GuiMessage 'Select a program first.'; return }
+        $loc = [string]$it.Tag.InstallLocation
+        if ($loc -and (Test-Path -LiteralPath $loc)) { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $loc + '"') } else { Show-GuiMessage 'This program does not record an install folder, or the folder is gone.' }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'FORCED BY NAME' -OnClick { Show-GuiForcedByName })
+    Add-GuiChild $bar (New-GuiButton -Text 'WINDOWS APPS' -OnClick { Show-GuiWindowsApps })
+    Add-GuiChild $bar (New-GuiButton -Text 'INSTALL MONITOR' -OnClick { Show-GuiInstallMonitor })
+    Add-GuiChild $bar (New-GuiButton -Text 'BROWSER EXTENSIONS' -OnClick { Show-GuiBrowserExtensions })
+    Add-GuiChild $bar (New-GuiButton -Text 'STARTUP MANAGER' -OnClick { Show-GuiStartup })
+    Add-GuiChild $bar (New-GuiButton -Text 'LOGS' -OnClick { Show-GuiUninstallLogs })
+    Add-GuiChild $bar (New-GuiButton -Text 'QUARANTINE' -OnClick { Show-GuiQuarantine })
+    Add-GuiChild $bar (New-GuiButton -Text 'JUNK CLEANER' -OnClick { Show-GuiJunkCleaner })
+    Add-GuiChild $bar (New-GuiButton -Text 'EXCLUDE LIST' -OnClick { Show-GuiExcludeList })
+    Add-GuiChild $bar (New-GuiButton -Text 'OPTIONS' -OnClick { Show-GuiUninstallerOptions })
+    Add-GuiChild $bar (New-GuiButton -Text 'REFRESH' -OnClick { Show-GuiUninstaller })
+    Add-GuiChild $Script:GuiContent $bar
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Windows components, runtimes, drivers and security software are marked protected. Leftovers are matched by exact name only, so some may be missed rather than risk removing something shared.' -Size 11 -Color '#6F82A3' -Margin '0,10,0,0')
+}
+
+function New-GuiLeftoverMenu {
+    # Right-click menu for one leftover. The check box carries the item in its Tag.
+    param($CheckBox)
+    $item = $CheckBox.Tag
+    $m = New-Object System.Windows.Controls.ContextMenu
+    if ($item.Type -in @('RegistryKey', 'RunValue')) {
+        $mi = New-Object System.Windows.Controls.MenuItem
+        $mi.Header = 'Open in Regedit'
+        $mi.Tag = $CheckBox
+        $mi.Add_Click({
+            param($s, $e)
+            try { [void](Open-RegistryKeyInRegedit -Path $s.Tag.Tag.Path) } catch { Show-GuiMessage $_.Exception.Message 'Regedit' 'Warning' }
+        })
+        [void]$m.Items.Add($mi)
+    } else {
+        $mi = New-Object System.Windows.Controls.MenuItem
+        $mi.Header = 'Open containing folder'
+        $mi.Tag = $CheckBox
+        $mi.Add_Click({
+            param($s, $e)
+            try { Open-LeftoverFolder -Path $s.Tag.Tag.Path } catch { Show-GuiMessage $_.Exception.Message 'Open folder' 'Warning' }
+        })
+        [void]$m.Items.Add($mi)
+    }
+    $ex = New-Object System.Windows.Controls.MenuItem
+    $ex.Header = 'Add to exclude list (never touch)'
+    $ex.Tag = $CheckBox
+    $ex.Add_Click({
+        param($s, $e)
+        $cb = $s.Tag
+        $it = $cb.Tag
+        try {
+            $pat = [string]$it.Path
+            if ($it.Type -eq 'RunValue') { $pat = $pat + '\' + $it.Name }
+            [void](Add-ExcludeEntry -Pattern $pat)
+            $it.Status = 'Protected'
+            $cb.IsChecked = $false
+            $cb.IsEnabled = $false
+            $cb.FontWeight = 'Normal'
+            $cb.Foreground = (Get-GuiBrush '#F85149')
+        } catch { Show-GuiMessage $_.Exception.Message 'Exclude list' 'Warning' }
+    })
+    [void]$m.Items.Add($ex)
+    return $m
+}
+
+function New-GuiLeftoverCheckBox {
+    # Bold = matched to this program (can be selected). Red = on the exclude list (never touched).
+    param($Item, [bool]$CheckAll = $false)
+    $cb = New-Object System.Windows.Controls.CheckBox
+    $sz = ''
+    if ($Item.SizeBytes -gt 0) { $sz = '   ' + (Format-Bytes $Item.SizeBytes) }
+    $what = $Item.Path
+    if ($Item.Name) { $what = $Item.Path + '  ->  ' + $Item.Name }
+    $cb.Content = ("{0}   {1}{2}   [{3}]`n{4}" -f $Item.Type, $what, $sz, $Item.Risk, $Item.Detail)
+    $cb.Tag = $Item
+    $cb.Margin = '12,2,0,2'
+    if ($Item.Status -eq 'Protected') {
+        $cb.IsEnabled = $false
+        $cb.IsChecked = $false
+        $cb.Foreground = (Get-GuiBrush '#F85149')
+        $cb.ToolTip = 'On your exclude list. It will never be touched.'
+    } else {
+        $cb.FontWeight = 'Bold'
+        $cb.IsChecked = $CheckAll
+    }
+    $cb.ContextMenu = (New-GuiLeftoverMenu -CheckBox $cb)
+    return $cb
+}
+
+function Show-GuiLeftovers {
+    param($Program, $Items, $OtherPrograms = @(), [string]$RecordDir = '', [string]$Mode = '', [switch]$Batch)
+    $settings = Get-UninstallerSettings
+    $Script:GuiLeftBatch = [bool]$Batch
+    $sub = 'Scan level: {0}. Bold items were matched to this program and can be selected. Grey lines only show where they sit. Red items are on your exclude list and are never touched. Right-click an item for more. Selected items go to quarantine, and registry keys are exported first.' -f $Mode
+    Reset-GuiPage -Title ('Leftovers of ' + $Program.Name) -Subtitle $sub
+    $Script:GuiLeftChecks = New-Object System.Collections.Generic.List[object]
+    $Script:GuiLeftProgram = $Program
+    $Script:GuiLeftOthers = $OtherPrograms
+    $Script:GuiLeftRecord = $RecordDir
+    $items = @($Items)
+    if ($items.Count -eq 0) {
+        Add-GuiChild $Script:GuiContent (New-GuiText -Text 'No leftovers were found by exact name.' -Size 14 -Margin '0,10,0,10')
+        Add-GuiChild $Script:GuiContent (New-GuiButton -Text 'DONE' -Width 160 -OnClick { Show-GuiUninstaller })
+        Set-GuiStatus 'Done. Nothing else was changed.'
+        return
+    }
+    $sp = New-Object System.Windows.Controls.StackPanel
+    $lastParent = $null
+    foreach ($i in @($items | Sort-Object -Property Parent, Path)) {
+        if ($i.Parent -ne $lastParent) {
+            Add-GuiChild $sp (New-GuiText -Text ('In ' + $i.Parent) -Size 11 -Color '#6F82A3' -Margin '0,8,0,2')
+            $lastParent = $i.Parent
+        }
+        $cb = New-GuiLeftoverCheckBox -Item $i -CheckAll ([bool]$settings.CheckAllByDefault)
+        [void]$Script:GuiLeftChecks.Add($cb)
+        Add-GuiChild $sp $cb
+    }
+    Add-GuiChild $Script:GuiContent $sp
+    $bar = New-Object System.Windows.Controls.WrapPanel
+    $bar.Margin = '0,12,0,0'
+    Add-GuiChild $bar (New-GuiButton -Text 'SELECT ALL LOW-RISK' -Width 190 -OnClick {
+        foreach ($c in @($Script:GuiLeftChecks)) { if ($c.IsEnabled) { $c.IsChecked = ($c.Tag.Risk -eq 'LOW') } }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'SELECT ALL' -Width 130 -OnClick {
+        foreach ($c in @($Script:GuiLeftChecks)) { if ($c.IsEnabled) { $c.IsChecked = $true } }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'SELECT NONE' -Width 130 -OnClick {
+        foreach ($c in @($Script:GuiLeftChecks)) { $c.IsChecked = $false }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'MOVE SELECTED TO QUARANTINE' -Bg '#238636' -Width 260 -OnClick {
+        $sel = @($Script:GuiLeftChecks | Where-Object { $_.IsChecked -and $_.IsEnabled } | ForEach-Object { $_.Tag })
+        if ($sel.Count -eq 0) { Show-GuiMessage 'Select at least one item, or press SKIP.'; return }
+        $list = (@($sel | ForEach-Object { '{0}: {1}' -f $_.Type, $_.Path }) -join "`n")
+        if (-not (Confirm-Gui ("Move these {0} item(s) to quarantine?`n`n{1}`n`nRegistry keys are exported first. You can restore everything from the Quarantine page." -f $sel.Count, $list) 'Confirm cleanup' 'Warning')) { return }
+        if ($Script:GuiLeftBatch) {
+            $r = Invoke-GuiWithBusy -Title 'Moving leftovers to quarantine' -Detail 'Exporting registry keys and moving folders...' -Action { Move-BatchLeftovers -Items $sel -OtherPrograms $Script:GuiLeftOthers }
+        } else {
+            $r = Invoke-GuiWithBusy -Title 'Moving leftovers to quarantine' -Detail 'Exporting registry keys and moving folders...' -Action { Move-LeftoversToQuarantine -Items $sel -ProgramName $Script:GuiLeftProgram.Name -OtherPrograms $Script:GuiLeftOthers }
+            Update-UninstallRecord -Dir $Script:GuiLeftRecord -Values @{ LeftoversMoved = $r.Moved; Quarantine = $r.Dir }
+        }
+        $msg = ("Moved {0} item(s) to quarantine." -f $r.Moved)
+        if ($r.Failed -gt 0) { $msg += ("`n{0} item(s) could not be moved and were left alone. See the PowerShell window and the log." -f $r.Failed) }
+        Show-GuiMessage $msg 'DIVuninstaller'
+        Show-GuiUninstaller
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'SKIP' -Width 120 -OnClick {
+        Update-UninstallRecord -Dir $Script:GuiLeftRecord -Values @{ LeftoversMoved = 0 }
+        Show-GuiUninstaller
+    })
+    Add-GuiChild $Script:GuiContent $bar
+    $prot = @($items | Where-Object { $_.Status -eq 'Protected' }).Count
+    $msg2 = '{0} possible leftover(s). Review each one.' -f $items.Count
+    if ($prot -gt 0) { $msg2 += ' {0} on your exclude list.' -f $prot }
+    Set-GuiStatus $msg2
+}
+
+function Show-GuiExcludeList {
+    Reset-GuiPage -Title 'Exclude list' -Subtitle 'Folders and registry keys listed here are shown in red and are never moved, even if you select them. A pattern also covers everything under it. Use * for any text and ? for one character.'
+    $list = @(Get-ExcludeList)
+    $lb = New-Object System.Windows.Controls.ListBox
+    $lb.Height = 240
+    $lb.Background = (Get-GuiBrush '#131D33'); $lb.Foreground = (Get-GuiBrush '#E8EEF8')
+    foreach ($p in $list) { [void]$lb.Items.Add($p) }
+    $Script:GuiExList = $lb
+    Add-GuiChild $Script:GuiContent $lb
+    if ($list.Count -eq 0) { Add-GuiChild $Script:GuiContent (New-GuiText -Text 'The exclude list is empty.' -Color '#8DA0BF') }
+    $row = New-Object System.Windows.Controls.WrapPanel
+    $row.Margin = '0,10,0,0'
+    $box = New-Object System.Windows.Controls.TextBox
+    $box.Width = 460; $box.Margin = '0,0,10,8'; $box.Padding = '8,6'
+    $box.Background = (Get-GuiBrush '#131D33'); $box.Foreground = (Get-GuiBrush '#E8EEF8'); $box.BorderBrush = (Get-GuiBrush '#25324D')
+    $box.ToolTip = 'Example: C:\Program Files\MyApp   or   HKCU:\Software\MyApp   or   C:\Users\*\AppData\Local\MyApp*'
+    $Script:GuiExBox = $box
+    Add-GuiChild $row $box
+    Add-GuiChild $row (New-GuiButton -Text 'ADD' -Bg '#238636' -Width 90 -OnClick {
+        try { [void](Add-ExcludeEntry -Pattern ([string]$Script:GuiExBox.Text)); Show-GuiExcludeList } catch { Show-GuiMessage $_.Exception.Message 'Exclude list' 'Warning' }
+    })
+    Add-GuiChild $row (New-GuiButton -Text 'REMOVE SELECTED' -Width 170 -OnClick {
+        $sel = $Script:GuiExList.SelectedItem
+        if (-not $sel) { Show-GuiMessage 'Select an entry first.'; return }
+        Remove-ExcludeEntry -Pattern ([string]$sel)
+        Show-GuiExcludeList
+    })
+    Add-GuiChild $row (New-GuiButton -Text 'BACK' -Width 100 -OnClick { Show-GuiUninstaller })
+    Add-GuiChild $Script:GuiContent $row
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text ('Saved in: ' + $Script:ExcludeFile) -Size 11 -Color '#6F82A3' -Margin '0,6,0,0')
+}
+
+function Show-GuiUninstallerOptions {
+    Reset-GuiPage -Title 'DIVuninstaller options' -Subtitle 'All three are off unless you turn them on.'
+    $s = Get-UninstallerSettings
+    $mk = {
+        param([string]$Text, [bool]$On)
+        $c = New-Object System.Windows.Controls.CheckBox
+        $c.Content = $Text; $c.IsChecked = $On; $c.Margin = '0,6,0,6'
+        return $c
+    }
+    $Script:GuiOptCheck = & $mk 'Check all matched leftovers by default (you still review the list and confirm before anything moves)' ([bool]$s.CheckAllByDefault)
+    $Script:GuiOptStop = & $mk 'Force-stop programs running from the install folder before uninstalling (unsaved work in them is lost)' ([bool]$s.ForceStopExecutables)
+    $Script:GuiOptBuiltIn = & $mk 'Only run the built-in uninstaller (never scan for leftovers)' ([bool]$s.OnlyBuiltIn)
+    Add-GuiChild $Script:GuiContent $Script:GuiOptCheck
+    Add-GuiChild $Script:GuiContent $Script:GuiOptStop
+    Add-GuiChild $Script:GuiContent $Script:GuiOptBuiltIn
+    $bar = New-Object System.Windows.Controls.WrapPanel
+    $bar.Margin = '0,12,0,0'
+    Add-GuiChild $bar (New-GuiButton -Text 'SAVE' -Bg '#238636' -Width 120 -OnClick {
+        [void](Set-UninstallerSetting -Name 'CheckAllByDefault' -Value ([bool]$Script:GuiOptCheck.IsChecked))
+        [void](Set-UninstallerSetting -Name 'ForceStopExecutables' -Value ([bool]$Script:GuiOptStop.IsChecked))
+        [void](Set-UninstallerSetting -Name 'OnlyBuiltIn' -Value ([bool]$Script:GuiOptBuiltIn.IsChecked))
+        Show-GuiMessage 'Options saved.' 'DIVuninstaller'
+        Show-GuiUninstaller
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'BACK' -Width 100 -OnClick { Show-GuiUninstaller })
+    Add-GuiChild $Script:GuiContent $bar
+}
+
+function Show-GuiForcedByName {
+    Reset-GuiPage -Title 'Forced uninstall by name' -Subtitle 'For a program that is not in the list, was removed earlier, or was only partly installed. Type its exact name, a folder inside Program Files, ProgramData or AppData, or both. DIVuninstaller will NOT run any uninstaller from here.'
+    $mkBox = {
+        $b = New-Object System.Windows.Controls.TextBox
+        $b.Width = 520; $b.Margin = '0,0,0,8'; $b.Padding = '8,6'; $b.HorizontalAlignment = 'Left'
+        $b.Background = (Get-GuiBrush '#131D33'); $b.Foreground = (Get-GuiBrush '#E8EEF8'); $b.BorderBrush = (Get-GuiBrush '#25324D')
+        return $b
+    }
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Program name (several names can be separated with ; when searching)' -Size 11 -Color '#8DA0BF')
+    $Script:GuiFbName = & $mkBox
+    Add-GuiChild $Script:GuiContent $Script:GuiFbName
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Install folder (optional)' -Size 11 -Color '#8DA0BF')
+    $Script:GuiFbPath = & $mkBox
+    Add-GuiChild $Script:GuiContent $Script:GuiFbPath
+    $lb = New-Object System.Windows.Controls.ListBox
+    $lb.Height = 140
+    $lb.Background = (Get-GuiBrush '#131D33'); $lb.Foreground = (Get-GuiBrush '#E8EEF8')
+    $Script:GuiFbList = $lb
+    Add-GuiChild $Script:GuiContent $lb
+    $note = New-GuiText -Text 'Press FIND to look for a built-in uninstaller or an earlier record. If a program is still installed, use UNINSTALL on the main page instead.' -Size 11 -Color '#6F82A3' -Margin '0,6,0,0'
+    $Script:GuiFbNote = $note
+    Add-GuiChild $Script:GuiContent $note
+    $bar = New-Object System.Windows.Controls.WrapPanel
+    $bar.Margin = '0,10,0,0'
+    Add-GuiChild $bar (New-GuiButton -Text 'FIND' -Width 110 -OnClick {
+        $nm = [string]$Script:GuiFbName.Text
+        $pt = [string]$Script:GuiFbPath.Text
+        if (-not $nm.Trim() -and -not $pt.Trim()) { Show-GuiMessage 'Type a name, a folder, or both.'; return }
+        $Script:GuiFbAll = @(Invoke-GuiWithBusy -Title 'Looking' -Detail 'Reading installed programs and earlier records. Nothing is changed.' -Action { Get-InstalledPrograms })
+        $found = @(Find-UninstallMatches -Name $nm -Path $pt -Programs $Script:GuiFbAll)
+        $Script:GuiFbList.Items.Clear()
+        foreach ($f in $found) {
+            $li = New-Object System.Windows.Controls.ListBoxItem
+            $li.Content = ('{0}    {1} {2}' -f $f.Source, $f.Name, $f.Version)
+            $li.Tag = $f
+            [void]$Script:GuiFbList.Items.Add($li)
+        }
+        if ($found.Count -eq 0) { $Script:GuiFbNote.Text = 'Nothing matched. You can still run the leftover scan by exact name and folder.' }
+        else { $Script:GuiFbNote.Text = ('{0} match(es). Select one to scan for it, or leave nothing selected to scan by the name and folder you typed.' -f $found.Count) }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'SCAN FOR LEFTOVERS' -Bg '#238636' -Width 220 -OnClick {
+        $nm = [string]$Script:GuiFbName.Text
+        $pt = [string]$Script:GuiFbPath.Text
+        $prog = $null
+        $sel = $Script:GuiFbList.SelectedItem
+        if ($sel -and $sel.Tag.Program) { $prog = $sel.Tag.Program }
+        elseif ($sel) { try { $prog = New-ForcedProgram -Name $sel.Tag.Name -InstallLocation $pt } catch { Show-GuiMessage $_.Exception.Message 'Forced uninstall' 'Warning'; return } }
+        else { try { $prog = New-ForcedProgram -Name $nm -InstallLocation $pt } catch { Show-GuiMessage $_.Exception.Message 'Forced uninstall' 'Warning'; return } }
+        if ($prog.Protected) { Show-GuiMessage ("{0} is a protected program and cannot be removed here." -f $prog.Name) 'Protected' 'Warning'; return }
+        $txt = "Forced uninstall of {0}?`n`nDIVuninstaller will NOT run any uninstaller. It will:`n 1. Create a restore point (if Windows allows it)`n 2. Back up the program's registry entry, if it has one`n 3. Scan at the Advanced level and show everything it finds`n`nNothing is selected for you, and nothing moves until you choose it." -f $prog.Name
+        if (-not (Confirm-Gui $txt 'Confirm forced uninstall' 'Warning')) { return }
+        try {
+            $r = Invoke-GuiWithBusy -Title 'Preparing forced uninstall' -Detail 'Creating a restore point...' -Action { Invoke-ProgramUninstall -Program $prog -SkipUninstaller }
+        } catch {
+            Write-Log -Level FAIL -Action 'FORCED_UNINSTALL' -Target $prog.Name -ErrorText $_.Exception.Message
+            Show-GuiMessage $_.Exception.Message 'Forced uninstall failed' 'Error'
+            return
+        }
+        $all = @($Script:GuiFbAll)
+        if ($all.Count -eq 0) { $all = @(Get-InstalledPrograms) }
+        $others = @($all | Where-Object { $_.KeyPath -ne $prog.KeyPath })
+        Start-GuiLeftoverStage -Program $prog -Mode 'Advanced' -RecordDir $r.BackupDir -Others $others
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'BACK' -Width 100 -OnClick { Show-GuiUninstaller })
+    Add-GuiChild $Script:GuiContent $bar
+}
+
+function Start-GuiBatchUninstall {
+    param($Selected)
+    $progs = @($Selected | ForEach-Object { $_.Tag })
+    $problem = Test-BatchProgramsReady -Programs $progs
+    if ($problem) { Show-GuiMessage $problem 'Batch uninstall' 'Warning'; return }
+    $mode = Get-GuiScanModeKey
+    $names = (@($progs | ForEach-Object { ' - {0} {1}' -f $_.Name, $_.Version }) -join "`n")
+    $how = 'Scan for leftovers ({0}) and show one combined list' -f $mode
+    if ($mode -eq 'None') { $how = 'Stop (Built-in mode: no leftover scan)' }
+    $txt = "Uninstall these {0} programs?`n`n{1}`n`nDIVuninstaller will:`n 1. Create ONE restore point (if Windows allows it)`n 2. Run each program's own uninstaller, one after another (each may open its own window; finish each one)`n 3. {2}`n`nNothing is deleted without your approval." -f $progs.Count, $names, $how
+    if (-not (Confirm-Gui $txt 'Confirm batch uninstall' 'Warning')) { return }
+    try {
+        $b = Invoke-GuiWithBusy -Title ('Uninstalling {0} programs' -f $progs.Count) -Detail 'Finish each uninstaller window as it opens. DIVuninstaller continues when it closes.' -Action { Invoke-BatchUninstall -Programs $progs }
+    } catch {
+        Write-Log -Level FAIL -Action 'BATCH_UNINSTALL' -ErrorText $_.Exception.Message
+        Show-GuiMessage $_.Exception.Message 'Batch uninstall failed' 'Error'
+        return
+    }
+    $gone = @($b.Results | Where-Object { $_.Result -and -not $_.Result.StillInstalled }).Count
+    $still = @($b.Results | Where-Object { $_.Result -and $_.Result.StillInstalled } | ForEach-Object { $_.Program.Name })
+    $err = @($b.Results | Where-Object { $_.Error } | ForEach-Object { '{0}: {1}' -f $_.Program.Name, $_.Error })
+    $sum = "{0} of {1} program(s) are gone." -f $gone, $progs.Count
+    if ($still.Count -gt 0) { $sum += "`n`nStill installed (cancelled or failed): " + ($still -join ', ') }
+    if ($err.Count -gt 0) { $sum += "`n`nCould not run:`n" + ($err -join "`n") }
+    if ($mode -eq 'None' -or $gone -eq 0) {
+        foreach ($r in @($b.Results)) { if ($r.Result) { Update-UninstallRecord -Dir $r.Result.BackupDir -Values @{ Mode = $(if ($mode -eq 'None') { 'Built-in' } else { $mode }); LeftoversFound = 0; LeftoversMoved = 0 } } }
+        Show-GuiMessage $sum 'Batch uninstall'
+        Show-GuiUninstaller
+        return
+    }
+    $all = @($Script:GuiProgAll)
+    $left = @(Invoke-GuiWithBusy -Title 'Looking for leftovers' -Detail ("Scan level: {0}. Checking by exact name. Nothing is changed." -f $mode) -Action { Get-BatchLeftovers -Batch $b -Mode $mode -AllPrograms $all })
+    Show-GuiMessage $sum 'Batch uninstall'
+    $keys = @($progs | ForEach-Object { $_.KeyPath })
+    $others = @($all | Where-Object { $keys -notcontains $_.KeyPath })
+    $label = [pscustomobject]@{ Name = ('{0} programs' -f $progs.Count) }
+    Show-GuiLeftovers -Program $label -Items $left -OtherPrograms $others -RecordDir '' -Mode $mode -Batch
+}
+
+function Show-GuiWindowsApps {
+    Reset-GuiPage -Title 'Windows Apps' -Subtitle 'Store and built-in apps for your account. Hold Ctrl or Shift to select several. System apps, frameworks and the apps Windows needs are not listed or are marked protected.'
+    $Script:GuiAppsAll = @(Invoke-GuiWithBusy -Title 'Reading Windows apps' -Detail 'Asking Windows for the app list. This does not change anything.' -Action { Get-WindowsApps })
+    $box = New-Object System.Windows.Controls.TextBox
+    $box.Width = 300; $box.Margin = '0,0,10,8'; $box.Padding = '8,6'; $box.HorizontalAlignment = 'Left'
+    $box.Background = (Get-GuiBrush '#131D33'); $box.Foreground = (Get-GuiBrush '#E8EEF8'); $box.BorderBrush = (Get-GuiBrush '#25324D')
+    $box.ToolTip = 'Type to filter by name'
+    $Script:GuiAppsFilter = $box
+    Add-GuiChild $Script:GuiContent $box
+    $lb = New-Object System.Windows.Controls.ListBox
+    $lb.Height = 320
+    $lb.SelectionMode = 'Extended'
+    $lb.Background = (Get-GuiBrush '#131D33'); $lb.Foreground = (Get-GuiBrush '#E8EEF8')
+    $Script:GuiAppsList = $lb
+    Add-GuiChild $Script:GuiContent $lb
+    $fill = {
+        $f = ([string]$Script:GuiAppsFilter.Text).Trim()
+        $Script:GuiAppsList.Items.Clear()
+        foreach ($a in @($Script:GuiAppsAll)) {
+            if ($f -and $a.Name -notlike ('*' + $f + '*')) { continue }
+            $li = New-Object System.Windows.Controls.ListBoxItem
+            $tag = ''
+            if ($a.Protected) { $tag = '   [protected]' }
+            $li.Content = ('{0}    {1}{2}' -f $a.Name, $a.Version, $tag)
+            $li.Tag = $a
+            [void]$Script:GuiAppsList.Items.Add($li)
+        }
+    }
+    $Script:GuiAppsFill = $fill
+    & $fill
+    $box.Add_TextChanged({ & $Script:GuiAppsFill })
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Removing an app cannot be undone by DIVuninstaller. Most can be reinstalled from the Microsoft Store. A restore point is made first, but Windows restore points do not bring Store apps back.' -Size 11 -Color '#6F82A3' -Margin '0,8,0,0')
+    $bar = New-Object System.Windows.Controls.WrapPanel
+    $bar.Margin = '0,10,0,0'
+    Add-GuiChild $bar (New-GuiButton -Text 'REMOVE FOR ME' -Bg '#238636' -Width 170 -OnClick {
+        $sel = @($Script:GuiAppsList.SelectedItems | ForEach-Object { $_.Tag })
+        if ($sel.Count -eq 0) { Show-GuiMessage 'Select at least one app first.'; return }
+        if (@($sel | Where-Object { $_.Protected }).Count -gt 0) { Show-GuiMessage 'One or more selected apps are protected and cannot be removed here. Deselect them.' 'Protected' 'Warning'; return }
+        $names = (@($sel | ForEach-Object { ' - ' + $_.Name }) -join "`n")
+        if (-not (Confirm-Gui ("Remove these {0} app(s) for your account?`n`n{1}`n`nA restore point is made first. Removal cannot be undone here; reinstall from the Microsoft Store if needed." -f $sel.Count, $names) 'Confirm removal' 'Warning')) { return }
+        try {
+            $r = Invoke-GuiWithBusy -Title 'Removing apps' -Detail 'Creating a restore point and removing the selected apps...' -Action { Remove-WindowsApps -Apps $sel }
+            $ok = @($r.Results | Where-Object { $_.Removed -gt 0 }).Count
+            $bad = @($r.Results | Where-Object { $_.Error } | ForEach-Object { '{0}: {1}' -f $_.Name, $_.Error })
+            $m = "Removed {0} of {1}." -f $ok, $sel.Count
+            if ($bad.Count -gt 0) { $m += "`n`nCould not remove:`n" + ($bad -join "`n") }
+            Show-GuiMessage $m 'Windows Apps'
+        } catch { Show-GuiMessage $_.Exception.Message 'Windows Apps' 'Error' }
+        Show-GuiWindowsApps
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'REMOVE FOR ALL USERS' -Width 220 -OnClick {
+        $sel = @($Script:GuiAppsList.SelectedItems | ForEach-Object { $_.Tag })
+        if ($sel.Count -eq 0) { Show-GuiMessage 'Select at least one app first.'; return }
+        if (@($sel | Where-Object { $_.Protected }).Count -gt 0) { Show-GuiMessage 'One or more selected apps are protected and cannot be removed here. Deselect them.' 'Protected' 'Warning'; return }
+        $names = (@($sel | ForEach-Object { ' - ' + $_.Name }) -join "`n")
+        if (-not (Confirm-Gui ("Remove these {0} app(s) for ALL users, including new accounts?`n`n{1}`n`nThis needs Administrator. It cannot be undone here." -f $sel.Count, $names) 'Confirm removal for all users' 'Warning')) { return }
+        try {
+            $r = Invoke-GuiWithBusy -Title 'Removing apps' -Detail 'Creating a restore point and removing the selected apps for all users...' -Action { Remove-WindowsApps -Apps $sel -AllUsers }
+            $ok = @($r.Results | Where-Object { $_.Removed -gt 0 }).Count
+            $bad = @($r.Results | Where-Object { $_.Error } | ForEach-Object { '{0}: {1}' -f $_.Name, $_.Error })
+            $m = "Removed {0} of {1}." -f $ok, $sel.Count
+            if ($bad.Count -gt 0) { $m += "`n`nCould not remove:`n" + ($bad -join "`n") }
+            Show-GuiMessage $m 'Windows Apps'
+        } catch { Show-GuiMessage $_.Exception.Message 'Windows Apps' 'Error' }
+        Show-GuiWindowsApps
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'REFRESH' -Width 110 -OnClick { Show-GuiWindowsApps })
+    Add-GuiChild $bar (New-GuiButton -Text 'BACK' -Width 100 -OnClick { Show-GuiUninstaller })
+    Add-GuiChild $Script:GuiContent $bar
+}
+
+function Show-GuiBrowserExtensions {
+    Reset-GuiPage -Title 'Browser extensions' -Subtitle 'Extensions found for Chrome, Edge, Brave and Firefox on this account. Hold Ctrl or Shift to select several. Removal moves the extension to quarantine, so you can restore it.'
+    $Script:GuiExtAll = @(Invoke-GuiWithBusy -Title 'Reading browser extensions' -Detail 'Reading the browsers'' extension folders. This does not change anything.' -Action { Get-BrowserExtensions })
+    $box = New-Object System.Windows.Controls.TextBox
+    $box.Width = 300; $box.Margin = '0,0,10,8'; $box.Padding = '8,6'; $box.HorizontalAlignment = 'Left'
+    $box.Background = (Get-GuiBrush '#131D33'); $box.Foreground = (Get-GuiBrush '#E8EEF8'); $box.BorderBrush = (Get-GuiBrush '#25324D')
+    $box.ToolTip = 'Type to filter by name or browser'
+    $Script:GuiExtFilter = $box
+    Add-GuiChild $Script:GuiContent $box
+    $lb = New-Object System.Windows.Controls.ListBox
+    $lb.Height = 320
+    $lb.SelectionMode = 'Extended'
+    $lb.Background = (Get-GuiBrush '#131D33'); $lb.Foreground = (Get-GuiBrush '#E8EEF8')
+    $Script:GuiExtList = $lb
+    Add-GuiChild $Script:GuiContent $lb
+    $fill = {
+        $f = ([string]$Script:GuiExtFilter.Text).Trim()
+        $Script:GuiExtList.Items.Clear()
+        foreach ($x in @($Script:GuiExtAll)) {
+            if ($f -and ($x.Name -notlike ('*' + $f + '*')) -and ($x.Browser -notlike ('*' + $f + '*'))) { continue }
+            $li = New-Object System.Windows.Controls.ListBoxItem
+            $li.Content = ('{0}    {1}    {2}    [{3}, {4}]' -f $x.Browser, $x.Name, $x.Version, $x.Profile, $x.Id)
+            $li.Tag = $x
+            [void]$Script:GuiExtList.Items.Add($li)
+        }
+    }
+    $Script:GuiExtFill = $fill
+    & $fill
+    $box.Add_TextChanged({ & $Script:GuiExtFill })
+    if (@($Script:GuiExtAll).Count -eq 0) { Add-GuiChild $Script:GuiContent (New-GuiText -Text 'No extensions were found.' -Color '#8DA0BF') }
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Close the browser first. If the extension was installed by your account sync or an organization policy, the browser may add it back; remove it from the browser''s own extensions page in that case. Firefox keeps a small list of its own and drops the missing entry the next time it starts.' -Size 11 -Color '#6F82A3' -Margin '0,8,0,0')
+    $bar = New-Object System.Windows.Controls.WrapPanel
+    $bar.Margin = '0,10,0,0'
+    Add-GuiChild $bar (New-GuiButton -Text 'MOVE TO QUARANTINE' -Bg '#238636' -Width 210 -OnClick {
+        $sel = @($Script:GuiExtList.SelectedItems | ForEach-Object { $_.Tag })
+        if ($sel.Count -eq 0) { Show-GuiMessage 'Select at least one extension first.'; return }
+        $names = (@($sel | ForEach-Object { ' - {0}: {1}' -f $_.Browser, $_.Name }) -join "`n")
+        if (-not (Confirm-Gui ("Move these {0} extension(s) to quarantine?`n`n{1}`n`nYou can restore them from the Quarantine page." -f $sel.Count, $names) 'Confirm removal' 'Warning')) { return }
+        try {
+            $r = Invoke-GuiWithBusy -Title 'Removing extensions' -Detail 'Moving the selected extensions to quarantine...' -Action { Remove-BrowserExtensions -Items $sel }
+            $m = "Moved {0} to quarantine." -f $r.Moved
+            if ($r.Failed -gt 0) { $m += ("`n{0} could not be moved and were left alone. See the PowerShell window." -f $r.Failed) }
+            Show-GuiMessage $m 'Browser extensions'
+        } catch { Show-GuiMessage $_.Exception.Message 'Browser extensions' 'Warning' }
+        Show-GuiBrowserExtensions
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'QUARANTINE' -Width 140 -OnClick { Show-GuiQuarantine })
+    Add-GuiChild $bar (New-GuiButton -Text 'REFRESH' -Width 110 -OnClick { Show-GuiBrowserExtensions })
+    Add-GuiChild $bar (New-GuiButton -Text 'BACK' -Width 100 -OnClick { Show-GuiUninstaller })
+    Add-GuiChild $Script:GuiContent $bar
+}
+
+function Show-GuiInstallMonitor {
+    Reset-GuiPage -Title 'Install monitor' -Subtitle 'Records what a program adds to your PC while it installs, so it can be cleaned up later from that record. It is best-effort: other changes made during the same time can show up, so you review every item and nothing is deleted (items go to quarantine).'
+    $pending = Get-PendingTrace
+    if ($pending) {
+        Add-GuiChild $Script:GuiContent (New-GuiText -Text ('A trace is in progress for: {0}   (started {1})' -f $pending.Name, $pending.Started) -Size 14 -Bold -Margin '0,6,0,2')
+        Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Install the program now. Open it once so it creates its settings, then close it and press FINISH TRACE. Do not install anything else in between.' -Size 12 -Color '#8DA0BF' -Margin '0,0,0,8')
+        $row = New-Object System.Windows.Controls.WrapPanel
+        Add-GuiChild $row (New-GuiButton -Text 'FINISH TRACE' -Bg '#238636' -Width 170 -OnClick {
+            try {
+                $r = Invoke-GuiWithBusy -Title 'Finishing the trace' -Detail 'Taking the second snapshot and comparing. This can take a minute.' -Action { Complete-InstallTrace }
+                $m = 'Saved. {0} item(s) were created during the install.' -f $r.Count
+                if (@($r.Diff.Services).Count -gt 0) { $m += ("`n`nNew Windows services appeared ({0}). Services are listed in the log only and are never removed by DIVuninstaller." -f (@($r.Diff.Services) -join ', ')) }
+                Show-GuiMessage $m 'Install monitor'
+            } catch { Show-GuiMessage $_.Exception.Message 'Install monitor' 'Error' }
+            Show-GuiInstallMonitor
+        })
+        Add-GuiChild $row (New-GuiButton -Text 'CANCEL TRACE' -Width 150 -OnClick {
+            if (Confirm-Gui 'Throw away the saved starting snapshot? Nothing on your PC changes.' 'Cancel trace' 'Question') { Stop-InstallTrace; Show-GuiInstallMonitor }
+        })
+        Add-GuiChild $Script:GuiContent $row
+    } else {
+        Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Program you are about to install' -Size 11 -Color '#8DA0BF' -Margin '0,6,0,2')
+        $box = New-Object System.Windows.Controls.TextBox
+        $box.Width = 420; $box.Margin = '0,0,0,8'; $box.Padding = '8,6'; $box.HorizontalAlignment = 'Left'
+        $box.Background = (Get-GuiBrush '#131D33'); $box.Foreground = (Get-GuiBrush '#E8EEF8'); $box.BorderBrush = (Get-GuiBrush '#25324D')
+        $Script:GuiTraceName = $box
+        Add-GuiChild $Script:GuiContent $box
+        Add-GuiChild $Script:GuiContent (New-GuiButton -Text 'START TRACE' -Bg '#238636' -Width 170 -OnClick {
+            $nm = ([string]$Script:GuiTraceName.Text).Trim()
+            if ($nm.Length -lt 2) { Show-GuiMessage 'Type the name of the program you are about to install.'; return }
+            if (-not (Confirm-Gui "Start a trace for '$nm'?`n`nDIVuninstaller will take a snapshot of folders, shortcuts, registry key names and startup entries (names only, no file contents). This can take a minute.`n`nClose other installers first, then install the program when it finishes." 'Start trace' 'Question')) { return }
+            try { [void](Invoke-GuiWithBusy -Title 'Taking the first snapshot' -Detail 'Reading folder and registry key names. Nothing is changed.' -Action { Start-InstallTrace -Name $nm }) } catch { Show-GuiMessage $_.Exception.Message 'Install monitor' 'Error'; return }
+            Show-GuiInstallMonitor
+        })
+    }
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Saved traces' -Size 14 -Bold -Margin '0,14,0,4')
+    $lb = New-Object System.Windows.Controls.ListBox
+    $lb.Height = 200
+    $lb.SelectionMode = 'Extended'
+    $lb.Background = (Get-GuiBrush '#131D33'); $lb.Foreground = (Get-GuiBrush '#E8EEF8')
+    foreach ($l in @(Get-TraceLogs)) {
+        $li = New-Object System.Windows.Controls.ListBoxItem
+        $li.Content = ('{0}    {1}    {2} item(s)' -f $l.Name, $l.Finished, $l.Count)
+        $li.Tag = $l
+        [void]$lb.Items.Add($li)
+    }
+    $Script:GuiTraceList = $lb
+    Add-GuiChild $Script:GuiContent $lb
+    if ($lb.Items.Count -eq 0) { Add-GuiChild $Script:GuiContent (New-GuiText -Text 'No traces yet.' -Color '#8DA0BF') }
+    $bar = New-Object System.Windows.Controls.WrapPanel
+    $bar.Margin = '0,10,0,0'
+    Add-GuiChild $bar (New-GuiButton -Text 'CLEAN UP FROM LOG' -Bg '#238636' -Width 210 -OnClick {
+        $it = $Script:GuiTraceList.SelectedItem
+        if (-not $it) { Show-GuiMessage 'Select a trace first.'; return }
+        $log = $it.Tag
+        $all = @(Invoke-GuiWithBusy -Title 'Checking' -Detail 'Reading installed programs. Nothing is changed.' -Action { Get-InstalledPrograms })
+        $still = @($all | Where-Object { $_.Name -ieq $log.Name })
+        if ($still.Count -gt 0) {
+            if (-not (Confirm-Gui ("{0} is still listed as installed.`n`nUse UNINSTALL on the main page first so its own uninstaller runs, then come back here for what it leaves behind.`n`nClean up from the log anyway? (Items still go to quarantine and can be restored.)" -f $log.Name) 'Still installed' 'Warning')) { return }
+        }
+        $items = @(Get-TraceReviewItems -Log $log)
+        if ($items.Count -eq 0) { Show-GuiMessage 'Everything in this log is already gone.' 'Install monitor'; return }
+        $others = @($all | Where-Object { $_.Name -ine $log.Name })
+        Show-GuiLeftovers -Program ([pscustomobject]@{ Name = $log.Name }) -Items $items -OtherPrograms $others -RecordDir '' -Mode 'Trace log'
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'EDIT LOG' -Width 110 -OnClick {
+        $it = $Script:GuiTraceList.SelectedItem
+        if (-not $it) { Show-GuiMessage 'Select a trace first.'; return }
+        Show-GuiTraceEditor -Dir $it.Tag.Path
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'MERGE SELECTED' -Width 160 -OnClick {
+        $sel = @($Script:GuiTraceList.SelectedItems | ForEach-Object { $_.Tag })
+        if ($sel.Count -lt 2) { Show-GuiMessage 'Hold Ctrl or Shift and select at least two traces to merge.'; return }
+        $nm = ('Merged: ' + (($sel | ForEach-Object { $_.Name }) -join ' + '))
+        if ($nm.Length -gt 80) { $nm = $nm.Substring(0, 80) }
+        if (-not (Confirm-Gui ("Merge these {0} logs into a new log?`n`n{1}`n`nThe originals are kept." -f $sel.Count, (($sel | ForEach-Object { ' - ' + $_.Name }) -join "`n")) 'Merge logs' 'Question')) { return }
+        try { [void](Merge-TraceLogs -Dirs @($sel | ForEach-Object { $_.Path }) -Name $nm); Show-GuiInstallMonitor } catch { Show-GuiMessage $_.Exception.Message 'Merge logs' 'Warning' }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'EXPORT' -Width 100 -OnClick {
+        $it = $Script:GuiTraceList.SelectedItem
+        if (-not $it) { Show-GuiMessage 'Select a trace first.'; return }
+        $dlg = New-Object Microsoft.Win32.SaveFileDialog
+        $dlg.Filter = 'DIVuninstaller trace log (*.json)|*.json'
+        $dlg.FileName = ((ConvertTo-SafeFileName -Text $it.Tag.Name) + '.json')
+        if ($dlg.ShowDialog()) {
+            try { Export-TraceLog -Dir $it.Tag.Path -Destination $dlg.FileName; Show-GuiMessage ('Saved to ' + $dlg.FileName) 'Export' } catch { Show-GuiMessage $_.Exception.Message 'Export' 'Warning' }
+        }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'IMPORT' -Width 100 -OnClick {
+        $dlg = New-Object Microsoft.Win32.OpenFileDialog
+        $dlg.Filter = 'DIVuninstaller trace log (*.json)|*.json'
+        if ($dlg.ShowDialog()) {
+            try {
+                $r = Import-TraceLog -Source $dlg.FileName
+                Show-GuiMessage ("Imported {0} item(s). {1} skipped by the safety checks.`n`nReview the log with EDIT LOG before cleaning up." -f $r.Imported, $r.Skipped) 'Import'
+                Show-GuiInstallMonitor
+            } catch { Show-GuiMessage $_.Exception.Message 'Import' 'Warning' }
+        }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'DELETE LOG' -Width 130 -OnClick {
+        $it = $Script:GuiTraceList.SelectedItem
+        if (-not $it) { Show-GuiMessage 'Select a trace first.'; return }
+        if (Confirm-Gui ("Delete this trace log?`n`n{0}`n`nThis only removes the record. The program and its files are not touched." -f $it.Tag.Name) 'Delete log' 'Question') {
+            try { Remove-TraceLog -Dir $it.Tag.Path; Show-GuiInstallMonitor } catch { Show-GuiMessage $_.Exception.Message 'Failed' 'Error' }
+        }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'BACK' -Width 100 -OnClick { Show-GuiUninstaller })
+    Add-GuiChild $Script:GuiContent $bar
+}
+
+function Show-GuiTraceEditor {
+    param([string]$Dir)
+    $d = Read-TraceData -Dir $Dir
+    $Script:GuiTeDir = $Dir
+    Reset-GuiPage -Title ('Edit log: ' + $d.Name) -Subtitle 'Change what a trace log will undo. Editing a log only changes the log. Nothing on your PC is touched until you use CLEAN UP FROM LOG, which still shows every item for review.'
+    $mk = {
+        $b = New-Object System.Windows.Controls.TextBox
+        $b.Width = 520; $b.Margin = '0,0,0,8'; $b.Padding = '8,6'; $b.HorizontalAlignment = 'Left'
+        $b.Background = (Get-GuiBrush '#131D33'); $b.Foreground = (Get-GuiBrush '#E8EEF8'); $b.BorderBrush = (Get-GuiBrush '#25324D')
+        return $b
+    }
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Name' -Size 11 -Color '#8DA0BF')
+    $Script:GuiTeName = & $mk; $Script:GuiTeName.Text = [string]$d.Name
+    Add-GuiChild $Script:GuiContent $Script:GuiTeName
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Comment' -Size 11 -Color '#8DA0BF')
+    $Script:GuiTeComment = & $mk; $Script:GuiTeComment.Text = [string]$d.Comment
+    Add-GuiChild $Script:GuiContent $Script:GuiTeComment
+    Add-GuiChild $Script:GuiContent (New-GuiButton -Text 'SAVE NAME AND COMMENT' -Width 230 -OnClick {
+        try { Set-TraceDetails -Dir $Script:GuiTeDir -Name ([string]$Script:GuiTeName.Text) -Comment ([string]$Script:GuiTeComment.Text); Show-GuiTraceEditor -Dir $Script:GuiTeDir } catch { Show-GuiMessage $_.Exception.Message 'Edit log' 'Warning' }
+    })
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text ('Items in this log ({0}). Hold Ctrl or Shift to select several.' -f @($d.Items).Count) -Size 14 -Bold -Margin '0,12,0,4')
+    $lb = New-Object System.Windows.Controls.ListBox
+    $lb.Height = 220
+    $lb.SelectionMode = 'Extended'
+    $lb.Background = (Get-GuiBrush '#131D33'); $lb.Foreground = (Get-GuiBrush '#E8EEF8')
+    foreach ($i in @($d.Items)) {
+        $li = New-Object System.Windows.Controls.ListBoxItem
+        $what = $i.Path; if ($i.Name) { $what = $i.Path + '  ->  ' + $i.Name }
+        $li.Content = ('{0}   {1}' -f $i.Type, $what)
+        $li.Tag = [pscustomobject]$i
+        [void]$lb.Items.Add($li)
+    }
+    $Script:GuiTeList = $lb
+    Add-GuiChild $Script:GuiContent $lb
+    Add-GuiChild $Script:GuiContent (New-GuiButton -Text 'REMOVE SELECTED FROM LOG' -Width 250 -OnClick {
+        $sel = @($Script:GuiTeList.SelectedItems | ForEach-Object { $_.Tag })
+        if ($sel.Count -eq 0) { Show-GuiMessage 'Select at least one item first.'; return }
+        if (-not (Confirm-Gui ("Remove {0} item(s) from this log?`n`nOnly the log changes. Files and registry keys on your PC are not touched." -f $sel.Count) 'Edit log' 'Question')) { return }
+        try { [void](Remove-TraceItems -Dir $Script:GuiTeDir -Items $sel); Show-GuiTraceEditor -Dir $Script:GuiTeDir } catch { Show-GuiMessage $_.Exception.Message 'Edit log' 'Warning' }
+    })
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Add an item by hand' -Size 14 -Bold -Margin '0,12,0,4')
+    $row = New-Object System.Windows.Controls.WrapPanel
+    $cmb = New-Object System.Windows.Controls.ComboBox
+    $cmb.Width = 140; $cmb.Margin = '0,0,10,8'
+    foreach ($v in @('Folder', 'File', 'RegistryKey', 'RunValue')) { [void]$cmb.Items.Add($v) }
+    $cmb.SelectedItem = 'Folder'
+    $Script:GuiTeType = $cmb
+    Add-GuiChild $row $cmb
+    $pb = & $mk; $pb.Width = 360; $pb.Margin = '0,0,10,8'; $pb.ToolTip = 'Full path, e.g. C:\Program Files\MyApp or HKCU:\Software\Vendor\Program'
+    $Script:GuiTePath = $pb
+    Add-GuiChild $row $pb
+    $nb = & $mk; $nb.Width = 160; $nb.Margin = '0,0,10,8'; $nb.ToolTip = 'Only for a startup value: the value name'
+    $Script:GuiTeValName = $nb
+    Add-GuiChild $row $nb
+    Add-GuiChild $row (New-GuiButton -Text 'ADD' -Bg '#238636' -Width 90 -OnClick {
+        try { Add-TraceItem -Dir $Script:GuiTeDir -Type ([string]$Script:GuiTeType.SelectedItem) -Path ([string]$Script:GuiTePath.Text) -Name ([string]$Script:GuiTeValName.Text); Show-GuiTraceEditor -Dir $Script:GuiTeDir } catch { Show-GuiMessage $_.Exception.Message 'Edit log' 'Warning' }
+    })
+    Add-GuiChild $Script:GuiContent $row
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Protected paths, system folders and keys under Microsoft, Classes and Policies are refused.' -Size 11 -Color '#6F82A3')
+    Add-GuiChild $Script:GuiContent (New-GuiButton -Text 'BACK' -Width 100 -OnClick { Show-GuiInstallMonitor })
+}
+
+function Invoke-GuiJunkRun {
+    param([bool]$Permanent)
+    $rows = @($Script:GuiJunkChecks | Where-Object { $_.IsChecked -and $_.IsEnabled } | ForEach-Object { $_.Tag })
+    if ($rows.Count -eq 0) { Show-GuiMessage 'Tick at least one category first.'; return }
+    $total = [long]0; foreach ($r in $rows) { $total += [long]$r.Bytes }
+    $names = ($rows | ForEach-Object { '  ' + $_.Name + '  (' + (Format-Bytes $_.Bytes) + ')' }) -join "`n"
+    if ($Permanent) {
+        $txt = "PERMANENTLY delete these?`n`n{0}`n`nTotal: {1}`n`nThis cannot be undone. Nothing is moved to quarantine." -f $names, (Format-Bytes $total)
+        if (-not (Confirm-Gui $txt 'Delete permanently' 'Warning')) { return }
+    } else {
+        $txt = "Move these to quarantine?`n`n{0}`n`nTotal: {1}`n`nThey can be restored from the Quarantine page. Disk space is only freed when you delete the quarantine entry." -f $names, (Format-Bytes $total)
+        if (-not (Confirm-Gui $txt 'Move to quarantine' 'Question')) { return }
+    }
+    $perm = $Permanent
+    $moved = 0; $failed = 0; $bytes = [long]0
+    foreach ($r in $rows) {
+        $row = $r
+        try {
+            $res = Invoke-GuiWithBusy -Title ('Cleaning ' + $row.Name) -Detail 'Checking each item again before it is moved...' -Action { Move-JunkToQuarantine -Category $row.Category -Units $row.Units -Permanent:$perm }
+            $moved += $res.Moved; $failed += $res.Failed; $bytes += $res.Bytes
+        } catch {
+            Write-Log -Level FAIL -Action 'JUNK_MOVE' -Target $row.Name -ErrorText $_.Exception.Message
+            Show-GuiMessage $_.Exception.Message 'Junk cleaner' 'Error'
+        }
+    }
+    $what = 'moved to quarantine'; if ($Permanent) { $what = 'deleted' }
+    Show-GuiMessage ("{0} item(s) {1} ({2}). {3} skipped (in use, changed recently, or protected)." -f $moved, $what, (Format-Bytes $bytes), $failed) 'Junk cleaner'
+    Show-GuiJunkCleaner
+}
+
+function Show-GuiJunkCleaner {
+    Reset-GuiPage -Title 'Junk cleaner' -Subtitle 'Old temporary files, crash dumps, error reports, thumbnail and browser caches. Nothing is ticked for you. Items go to quarantine first.'
+    $rows = @(Invoke-GuiWithBusy -Title 'Looking for junk' -Detail 'Reading folder sizes. This does not change anything.' -Action { Get-JunkScan })
+    $Script:GuiJunkChecks = @()
+    foreach ($r in $rows) {
+        $cb = New-Object System.Windows.Controls.CheckBox
+        $cb.Margin = '0,8,0,0'
+        $cb.Foreground = (Get-GuiBrush '#E8EEF8')
+        $cb.Content = ('{0}    {1}    {2:N0} file(s)' -f $r.Name, (Format-Bytes $r.Bytes), $r.Files)
+        $cb.Tag = $r
+        $cb.IsChecked = $false
+        if ($r.Units.Count -eq 0) { $cb.IsEnabled = $false }
+        $Script:GuiJunkChecks += $cb
+        Add-GuiChild $Script:GuiContent $cb
+        $note = $r.Note
+        if ($r.RecentSkipped -gt 0) { $note += ('  {0} newer item(s) are kept.' -f $r.RecentSkipped) }
+        if ($r.Truncated) { $note += '  Only the first 5000 items are listed; run it again afterwards.' }
+        Add-GuiChild $Script:GuiContent (New-GuiText -Text $note -Size 11 -Color '#8DA0BF' -Margin '24,0,0,0')
+        foreach ($b in @($r.Blocked)) { Add-GuiChild $Script:GuiContent (New-GuiText -Text $b -Size 11 -Color '#F0B35A' -Margin '24,0,0,0') }
+    }
+    $bar = New-Object System.Windows.Controls.WrapPanel
+    $bar.Margin = '0,14,0,0'
+    Add-GuiChild $bar (New-GuiButton -Text 'MOVE TO QUARANTINE' -Bg '#238636' -Width 200 -OnClick { Invoke-GuiJunkRun -Permanent $false })
+    Add-GuiChild $bar (New-GuiButton -Text 'DELETE PERMANENTLY' -Width 200 -OnClick { Invoke-GuiJunkRun -Permanent $true })
+    Add-GuiChild $bar (New-GuiButton -Text 'RESCAN' -Width 110 -OnClick { Show-GuiJunkCleaner })
+    Add-GuiChild $bar (New-GuiButton -Text 'QUARANTINE' -Width 130 -OnClick { Show-GuiQuarantine })
+    Add-GuiChild $bar (New-GuiButton -Text 'BACK' -Width 100 -OnClick { Show-GuiUninstaller })
+    Add-GuiChild $Script:GuiContent $bar
+    Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Never touched: Recycle Bin, Downloads, Documents, Desktop, browser history, cookies and passwords. Files changed in the last 24 hours and files in use are skipped. Windows Update, delivery and other system caches stay in the Cleanup page.' -Size 11 -Color '#6F82A3' -Margin '0,10,0,0')
+}
+
+function Show-GuiUninstallLogs {
+    Reset-GuiPage -Title 'Uninstall logs' -Subtitle ('Folder: ' + $Script:UninstalledDir)
+    $hist = @(Get-UninstallHistory)
+    $lb = New-Object System.Windows.Controls.ListBox
+    $lb.Height = 300
+    $lb.Background = (Get-GuiBrush '#131D33'); $lb.Foreground = (Get-GuiBrush '#E8EEF8')
+    foreach ($h in $hist) {
+        $item = New-Object System.Windows.Controls.ListBoxItem
+        $how = $h.Mode
+        if ($h.Forced) { $how = 'Forced' }
+        if (-not $how) { $how = 'not finished' }
+        $item.Content = ("{0}    {1}    {2}    leftovers moved: {3}" -f $h.Started, $h.Name, $how, $(if ($h.LeftoversMoved) { $h.LeftoversMoved } else { '0' }))
+        $item.Tag = $h
+        [void]$lb.Items.Add($item)
+    }
+    $Script:GuiLogList = $lb
+    Add-GuiChild $Script:GuiContent $lb
+    if ($hist.Count -eq 0) { Add-GuiChild $Script:GuiContent (New-GuiText -Text 'Nothing has been uninstalled with DIVuninstaller yet.' -Color '#8DA0BF') }
+    $det = New-GuiText -Text '' -Size 12 -Color '#8DA0BF' -Margin '0,8,0,0'
+    $Script:GuiLogDetails = $det
+    Add-GuiChild $Script:GuiContent $det
+    $lb.Add_SelectionChanged({
+        $it = $Script:GuiLogList.SelectedItem
+        if (-not $it) { return }
+        $h = $it.Tag
+        $q = $h.Quarantine; if (-not $q) { $q = 'none' }
+        $Script:GuiLogDetails.Text = ("{0} {1}`nStarted: {2}   Exit code: {3}   Scan level: {4}`nLeftovers found: {5}   moved: {6}`nQuarantine: {7}`nRecord and registry backup: {8}" -f $h.Name, $h.Version, $h.Started, $h.ExitCode, $h.Mode, $h.LeftoversFound, $h.LeftoversMoved, $q, $h.Path)
+    })
+    $bar = New-Object System.Windows.Controls.WrapPanel
+    $bar.Margin = '0,10,0,0'
+    Add-GuiChild $bar (New-GuiButton -Text 'OPEN FOLDER' -OnClick {
+        $it = $Script:GuiLogList.SelectedItem
+        $target = $Script:UninstalledDir
+        if ($it) { $target = $it.Tag.Path }
+        if (Test-Path -LiteralPath $target) { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $target + '"') } else { Show-GuiMessage 'There is nothing to open yet.' }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'BACK' -OnClick { Show-GuiUninstaller })
+    Add-GuiChild $Script:GuiContent $bar
+}
+
+function Read-UninstallScanMode {
+    if ((Get-UninstallerSettings).OnlyBuiltIn) { Write-Host '   Option set: only run the built-in uninstaller (no leftover scan).' -ForegroundColor DarkGray; return 'None' }
+    Write-Host '   Leftover scan level:  [N] built-in (no scan)   [S] safe   [M] moderate   [A] advanced' -ForegroundColor DarkGray
+    $c = (Read-Host '   Level (Enter = M)').Trim()
+    switch -Regex ($c) {
+        '^[Nn]' { return 'None' }
+        '^[Ss]' { return 'Safe' }
+        '^[Aa]' { return 'Advanced' }
+        default { return 'Moderate' }
+    }
+}
+
+function Invoke-ConsoleLeftoverStage {
+    param($Program, [string]$Mode, [string]$RecordDir, $Others)
+    if ($Mode -eq 'None') {
+        Update-UninstallRecord -Dir $RecordDir -Values @{ Mode = 'Built-in'; LeftoversFound = 0; LeftoversMoved = 0 }
+        Write-Tag INFO 'Built-in mode: no leftover scan.'
+        Wait-Enter
+        return
+    }
+    Write-Tag INFO ("Looking for leftovers ({0}), by exact name..." -f $Mode)
+    $left = @(Get-ProgramLeftovers -Program $Program -OtherPrograms $Others -Mode $Mode)
+    Update-UninstallRecord -Dir $RecordDir -Values @{ Mode = $Mode; LeftoversFound = $left.Count }
+    if ($left.Count -eq 0) { Write-Tag INFO 'No leftovers were found.'; Wait-Enter; return }
+    Invoke-ConsoleLeftoverReview -Items $left -Program $Program -RecordDir $RecordDir -Others $Others
+}
+
+function Invoke-ConsoleLeftoverReview {
+    param($Items, $Program, [string]$RecordDir, $Others, [switch]$Batch)
+    $left = @($Items)
+    $settings = Get-UninstallerSettings
+    $sel = @()
+    while ($true) {
+        Write-Host ''
+        Show-LeftoverList -Items $left
+        Write-Host ''
+        Write-Host '   Nothing is selected unless you turned on "check all". Items are moved to quarantine; registry keys are exported first.' -ForegroundColor DarkGray
+        Write-Host '   Red [PROTECTED] items are on your exclude list and are never touched.' -ForegroundColor DarkGray
+        Write-Host '   X<numbers> add to exclude list   |   R<number> open in Regedit   |   F<number> show in Explorer' -ForegroundColor DarkGray
+        $defHint = 'Enter = none'
+        if ($settings.CheckAllByDefault) { $defHint = 'Enter = all matched' }
+        $pick = (Read-Host ("   Numbers to quarantine (e.g. 1,3), L = all low-risk, A = all, {0}" -f $defHint)).Trim()
+        if ($pick -match '^[Xx]\s*(.+)$') {
+            foreach ($tok in ([string]$Matches[1] -split '[,\s]+')) {
+                if ($tok -match '^\d+$') {
+                    $k = [int]$tok
+                    if ($k -ge 1 -and $k -le $left.Count) {
+                        $it = $left[$k - 1]
+                        $pat = [string]$it.Path
+                        if ($it.Type -eq 'RunValue') { $pat = $pat + '\' + $it.Name }
+                        try { [void](Add-ExcludeEntry -Pattern $pat); $it.Status = 'Protected'; Write-Tag OK ('Added to the exclude list: ' + $pat) } catch { Write-Tag WARN $_.Exception.Message }
+                    }
+                }
+            }
+            continue
+        }
+        if ($pick -match '^[Rr]\s*(\d+)$') {
+            $k = [int]$Matches[1]
+            if ($k -ge 1 -and $k -le $left.Count) { try { [void](Open-RegistryKeyInRegedit -Path $left[$k - 1].Path) } catch { Write-Tag WARN $_.Exception.Message } }
+            continue
+        }
+        if ($pick -match '^[Ff]\s*(\d+)$') {
+            $k = [int]$Matches[1]
+            if ($k -ge 1 -and $k -le $left.Count) { try { Open-LeftoverFolder -Path $left[$k - 1].Path } catch { Write-Tag WARN $_.Exception.Message } }
+            continue
+        }
+        if ($pick -match '^[Aa]$') { $sel = @($left | Where-Object { $_.Status -ne 'Protected' }) }
+        elseif ($pick -match '^[Ll]$') { $sel = @($left | Where-Object { $_.Risk -eq 'LOW' -and $_.Status -ne 'Protected' }) }
+        elseif (-not $pick -and $settings.CheckAllByDefault) { $sel = @($left | Where-Object { $_.Status -ne 'Protected' }) }
+        elseif ($pick) {
+            foreach ($tok in ($pick -split '[,\s]+')) {
+                if ($tok -match '^\d+$') {
+                    $k = [int]$tok
+                    if ($k -ge 1 -and $k -le $left.Count -and $left[$k - 1].Status -ne 'Protected') { $sel += $left[$k - 1] }
+                }
+            }
+        }
+        break
+    }
+    if ($sel.Count -eq 0) { Update-UninstallRecord -Dir $RecordDir -Values @{ LeftoversMoved = 0 }; Write-Tag INFO 'Nothing was moved.'; Wait-Enter; return }
+    if (Read-YesNo -Prompt ("Move {0} item(s) to quarantine?" -f $sel.Count)) {
+        if ($Batch) { $m = Move-BatchLeftovers -Items $sel -OtherPrograms $Others }
+        else {
+            $m = Move-LeftoversToQuarantine -Items $sel -ProgramName $Program.Name -OtherPrograms $Others
+            Update-UninstallRecord -Dir $RecordDir -Values @{ LeftoversMoved = $m.Moved; Quarantine = $m.Dir }
+        }
+        Write-KV 'Moved' $m.Moved 'Green'
+        Write-KV 'Left alone' $m.Failed $(if ($m.Failed -gt 0) { 'Yellow' } else { 'Gray' })
+    }
+    Wait-Enter
+}
+
+function Invoke-ConsoleExcludeList {
+    while ($true) {
+        Clear-Host
+        Show-Header 'DIVUNINSTALLER (Exclude list)'
+        Write-Host '   Listed folders and registry keys are never moved. A pattern covers everything under it. * = any text, ? = one character.' -ForegroundColor DarkGray
+        $list = @(Get-ExcludeList)
+        if ($list.Count -eq 0) { Write-Tag INFO 'The exclude list is empty.' }
+        $i = 0
+        foreach ($p in $list) { $i++; Write-Host ('  {0,3}  {1}' -f $i, $p) }
+        Write-Host ''
+        $c = (Read-Host '   A <path> add   |   D <number> remove   |   B back').Trim()
+        if ($c -match '^[Bb]$' -or -not $c) { return }
+        if ($c -match '^[Aa]\s+(.+)$') {
+            try { [void](Add-ExcludeEntry -Pattern ([string]$Matches[1])); Write-Tag OK 'Added.' } catch { Write-Tag WARN $_.Exception.Message }
+            continue
+        }
+        if ($c -match '^[Dd]\s*(\d+)$') {
+            $k = [int]$Matches[1]
+            if ($k -ge 1 -and $k -le $list.Count) { Remove-ExcludeEntry -Pattern $list[$k - 1]; Write-Tag OK 'Removed.' } else { Write-Tag WARN 'No such number.' }
+            continue
+        }
+    }
+}
+
+function Invoke-ConsoleUninstallerOptions {
+    while ($true) {
+        Clear-Host
+        Show-Header 'DIVUNINSTALLER (Options)'
+        $s = Get-UninstallerSettings
+        Write-Host ('  1  Check all matched leftovers by default ........ {0}' -f $(if ($s.CheckAllByDefault) { 'ON' } else { 'off' }))
+        Write-Host ('  2  Force-stop programs in the install folder ..... {0}' -f $(if ($s.ForceStopExecutables) { 'ON' } else { 'off' }))
+        Write-Host ('  3  Only run the built-in uninstaller (no scan) ... {0}' -f $(if ($s.OnlyBuiltIn) { 'ON' } else { 'off' }))
+        Write-Host ''
+        $c = (Read-Host '   Number to switch on/off, B = back').Trim()
+        switch ($c) {
+            '1' { [void](Set-UninstallerSetting -Name 'CheckAllByDefault' -Value (-not $s.CheckAllByDefault)) }
+            '2' { [void](Set-UninstallerSetting -Name 'ForceStopExecutables' -Value (-not $s.ForceStopExecutables)) }
+            '3' { [void](Set-UninstallerSetting -Name 'OnlyBuiltIn' -Value (-not $s.OnlyBuiltIn)) }
+            default { if ($c -match '^[Bb]$' -or -not $c) { return } }
+        }
+    }
+}
+
+function Invoke-ConsoleForcedByName {
+    Clear-Host
+    Show-Header 'DIVUNINSTALLER (Forced uninstall by name)'
+    Write-Host '   For a program that is not listed, was removed earlier, or was only partly installed.' -ForegroundColor DarkGray
+    Write-Host '   No uninstaller is run from here. It scans for leftovers by exact name and folder.' -ForegroundColor DarkGray
+    $nm = (Read-Host '   Program name (several can be separated with ; when searching)').Trim()
+    $pt = (Read-Host '   Install folder (optional, inside Program Files / ProgramData / AppData)').Trim()
+    if (-not $nm -and -not $pt) { return }
+    $all = @(Get-InstalledPrograms)
+    $found = @(Find-UninstallMatches -Name $nm -Path $pt -Programs $all)
+    $prog = $null
+    if ($found.Count -gt 0) {
+        $i = 0
+        foreach ($f in $found) { $i++; Write-Host ('  {0,3}  {1}: {2} {3}' -f $i, $f.Source, $f.Name, $f.Version) }
+        Write-Host '   A program that is still installed has its own uninstaller. Use the normal UNINSTALL for it.' -ForegroundColor DarkGray
+        $k = (Read-Host '   Number to scan for (Enter = scan by what you typed)').Trim()
+        if ($k -match '^\d+$' -and [int]$k -ge 1 -and [int]$k -le $found.Count) {
+            $sel = $found[[int]$k - 1]
+            if ($sel.Program) { $prog = $sel.Program } else { try { $prog = New-ForcedProgram -Name $sel.Name -InstallLocation $pt } catch { Write-Tag WARN $_.Exception.Message; Wait-Enter; return } }
+        }
+    } else { Write-Tag INFO 'Nothing matched. The leftover scan can still run by name and folder.' }
+    if (-not $prog) { try { $prog = New-ForcedProgram -Name $nm -InstallLocation $pt } catch { Write-Tag WARN $_.Exception.Message; Wait-Enter; return } }
+    if ($prog.Protected) { Write-Tag WARN ("{0} is protected and cannot be removed here." -f $prog.Name); Wait-Enter; return }
+    Write-KV 'Scanning for' $prog.Name
+    if (-not (Read-YesNo -Prompt 'Make a restore point and scan at the Advanced level?')) { return }
+    try { $r = Invoke-ProgramUninstall -Program $prog -SkipUninstaller } catch { Write-Tag FAIL $_.Exception.Message; Wait-Enter; return }
+    $others = @($all | Where-Object { $_.KeyPath -ne $prog.KeyPath })
+    Invoke-ConsoleLeftoverStage -Program $prog -Mode 'Advanced' -RecordDir $r.BackupDir -Others $others
+}
+
+function Invoke-ConsoleBatchUninstall {
+    param($Programs, $All)
+    $progs = @($Programs)
+    $problem = Test-BatchProgramsReady -Programs $progs
+    if ($problem) { Write-Tag WARN $problem; Wait-Enter; return }
+    Write-Host ''
+    foreach ($p in $progs) { Write-KV 'Program' ($p.Name + ' ' + $p.Version) }
+    $mode = Read-UninstallScanMode
+    Write-Host ('   ' + (Get-ScanModeDescription -Mode $mode)) -ForegroundColor DarkGray
+    Write-Host ('   Steps: ONE restore point, then each program''s own uninstaller one after another, then one combined leftover list.') -ForegroundColor DarkGray
+    if (-not (Read-YesNo -Prompt ("Uninstall these {0} programs now?" -f $progs.Count))) { return }
+    try { $b = Invoke-BatchUninstall -Programs $progs } catch { Write-Tag FAIL $_.Exception.Message; Wait-Enter; return }
+    $gone = @($b.Results | Where-Object { $_.Result -and -not $_.Result.StillInstalled }).Count
+    Write-KV 'Gone' ('{0} of {1}' -f $gone, $progs.Count) $(if ($gone -eq $progs.Count) { 'Green' } else { 'Yellow' })
+    foreach ($r in @($b.Results | Where-Object { $_.Result -and $_.Result.StillInstalled })) { Write-Tag WARN ("{0} still appears to be installed (cancelled or failed)." -f $r.Program.Name) }
+    if ($mode -eq 'None' -or $gone -eq 0) {
+        foreach ($r in @($b.Results)) { if ($r.Result) { Update-UninstallRecord -Dir $r.Result.BackupDir -Values @{ Mode = $(if ($mode -eq 'None') { 'Built-in' } else { $mode }); LeftoversFound = 0; LeftoversMoved = 0 } } }
+        Wait-Enter
+        return
+    }
+    $left = @(Get-BatchLeftovers -Batch $b -Mode $mode -AllPrograms $All)
+    if ($left.Count -eq 0) { Write-Tag INFO 'No leftovers were found.'; Wait-Enter; return }
+    $keys = @($progs | ForEach-Object { $_.KeyPath })
+    $others = @($All | Where-Object { $keys -notcontains $_.KeyPath })
+    Invoke-ConsoleLeftoverReview -Items $left -Program ([pscustomobject]@{ Name = ('{0} programs' -f $progs.Count) }) -RecordDir '' -Others $others -Batch
+}
+
+function Invoke-ConsoleWindowsApps {
+    Clear-Host
+    Show-Header 'DIVUNINSTALLER (Windows Apps)'
+    Write-Host '   Store and built-in apps for your account. Protected apps cannot be removed here.' -ForegroundColor DarkGray
+    $filter = (Read-Host '   Filter by name (Enter = all)').Trim()
+    Write-Busy -Activity 'Reading Windows apps' -Status 'Asking Windows for the list...' -Percent 30
+    $apps = @(Get-WindowsApps | Where-Object { (-not $filter) -or ($_.Name -like ('*' + $filter + '*')) } | Select-Object -First 80)
+    Write-Busy -Activity 'Reading Windows apps' -Status 'Done' -Percent 100
+    if ($apps.Count -eq 0) { Write-Tag INFO 'No apps matched.'; Wait-Enter; return }
+    $i = 0
+    foreach ($a in $apps) { $i++; Write-Host ('  {0,3}  {1}  {2}{3}' -f $i, $a.Name, $a.Version, $(if ($a.Protected) { '  [protected]' } else { '' })) }
+    Write-Host ''
+    $pick = (Read-Host '   Numbers to remove (e.g. 2,5), Enter = none').Trim()
+    if (-not $pick) { return }
+    $sel = @()
+    foreach ($tok in ($pick -split '[,\s]+')) { if ($tok -match '^\d+$') { $k = [int]$tok; if ($k -ge 1 -and $k -le $apps.Count) { $sel += $apps[$k - 1] } } }
+    if ($sel.Count -eq 0) { return }
+    if (@($sel | Where-Object { $_.Protected }).Count -gt 0) { Write-Tag WARN 'One or more picks are protected. Nothing was removed.'; Wait-Enter; return }
+    $scope = (Read-Host '   For [M]e only (default) or [A]ll users (needs Administrator)').Trim()
+    Write-Host '   Removal cannot be undone here; reinstall from the Microsoft Store if needed. A restore point is made first.' -ForegroundColor Yellow
+    if (-not (Read-YesNo -Prompt ("Remove {0} app(s)?" -f $sel.Count))) { return }
+    try {
+        if ($scope -match '^[Aa]') { $r = Remove-WindowsApps -Apps $sel -AllUsers } else { $r = Remove-WindowsApps -Apps $sel }
+        Write-KV 'Removed' (@($r.Results | Where-Object { $_.Removed -gt 0 }).Count) 'Green'
+    } catch { Write-Tag FAIL $_.Exception.Message }
+    Wait-Enter
+}
+
+function Invoke-ConsoleBrowserExtensions {
+    Clear-Host
+    Show-Header 'DIVUNINSTALLER (Browser extensions)'
+    Write-Host '   Chrome, Edge, Brave and Firefox. Removal moves the extension to quarantine (restore from the quarantine page).' -ForegroundColor DarkGray
+    $filter = (Read-Host '   Filter by name or browser (Enter = all)').Trim()
+    $all = @(Get-BrowserExtensions | Where-Object { (-not $filter) -or ($_.Name -like ('*' + $filter + '*')) -or ($_.Browser -like ('*' + $filter + '*')) } | Select-Object -First 100)
+    if ($all.Count -eq 0) { Write-Tag INFO 'No extensions found.'; Wait-Enter; return }
+    $i = 0
+    foreach ($x in $all) { $i++; Write-Host ('  {0,3}  {1}  {2}  {3}  [{4}]' -f $i, $x.Browser, $x.Name, $x.Version, $x.Profile) }
+    Write-Host ''
+    $pick = (Read-Host '   Numbers to move to quarantine (e.g. 2,5), Enter = none').Trim()
+    if (-not $pick) { return }
+    $sel = @()
+    foreach ($tok in ($pick -split '[,\s]+')) { if ($tok -match '^\d+$') { $k = [int]$tok; if ($k -ge 1 -and $k -le $all.Count) { $sel += $all[$k - 1] } } }
+    if ($sel.Count -eq 0) { return }
+    if (-not (Read-YesNo -Prompt ("Move {0} extension(s) to quarantine? Close the browser first." -f $sel.Count))) { return }
+    try { $r = Remove-BrowserExtensions -Items $sel; Write-KV 'Moved' $r.Moved 'Green'; Write-KV 'Left alone' $r.Failed $(if ($r.Failed -gt 0) { 'Yellow' } else { 'Gray' }) } catch { Write-Tag WARN $_.Exception.Message }
+    Wait-Enter
+}
+
+function Invoke-ConsoleInstallMonitor {
+    while ($true) {
+        Clear-Host
+        Show-Header 'DIVUNINSTALLER (Install monitor)'
+        Write-Host '   Records what a program adds while it installs, so it can be cleaned up later. Best-effort: you review every item; items go to quarantine.' -ForegroundColor DarkGray
+        $pending = Get-PendingTrace
+        if ($pending) { Write-Tag INFO ("A trace is in progress for '{0}' (started {1}). Install it, open it once, then choose F." -f $pending.Name, $pending.Started) }
+        $logs = @(Get-TraceLogs)
+        $i = 0
+        foreach ($l in $logs) { $i++; Write-Host ('  {0,3}  {1}   {2}   {3} item(s)' -f $i, $l.Name, $l.Finished, $l.Count) }
+        Write-Host ''
+        if ($pending) { Write-Host '   F finish trace   |   X cancel trace   |   C <n> clean up   |   E <n> edit   |   M <n,n> merge   |   P <n> <file> export   |   I <file> import   |   D <n> delete   |   B back' -ForegroundColor DarkGray }
+        else { Write-Host '   S start a trace   |   C <n> clean up   |   E <n> edit   |   M <n,n> merge   |   P <n> <file> export   |   I <file> import   |   D <n> delete   |   B back' -ForegroundColor DarkGray }
+        $c = (Read-Host '   Choice').Trim()
+        if ($c -match '^[Bb]$' -or -not $c) { return }
+        if ($c -match '^[Ss]$' -and -not $pending) {
+            $nm = (Read-Host '   Name of the program you are about to install').Trim()
+            if ($nm.Length -lt 2) { continue }
+            try { Write-Tag INFO 'Taking the first snapshot (names only; this can take a minute)...'; [void](Start-InstallTrace -Name $nm); Write-Tag OK 'Ready. Install the program now, then come back and choose F.'; Wait-Enter } catch { Write-Tag FAIL $_.Exception.Message; Wait-Enter }
+            continue
+        }
+        if ($c -match '^[Ff]$' -and $pending) {
+            try { Write-Tag INFO 'Taking the second snapshot...'; $r = Complete-InstallTrace; Write-Tag OK ("Saved. {0} item(s) were created during the install." -f $r.Count); if (@($r.Diff.Services).Count -gt 0) { Write-Tag INFO ("New services (listed only, never removed): {0}" -f (@($r.Diff.Services) -join ', ')) } } catch { Write-Tag FAIL $_.Exception.Message }
+            Wait-Enter
+            continue
+        }
+        if ($c -match '^[Xx]$' -and $pending) { if (Read-YesNo -Prompt 'Throw away the saved starting snapshot?') { Stop-InstallTrace }; continue }
+        if ($c -match '^[Ee]\s*(\d+)$') { $n = [int]$Matches[1]; if ($n -ge 1 -and $n -le $logs.Count) { Invoke-ConsoleTraceEditor -Dir $logs[$n - 1].Path } else { Write-Tag WARN 'No such number.'; Wait-Enter }; continue }
+        if ($c -match '^[Mm]\s*(.+)$') {
+            $sel = @()
+            foreach ($tok in ([string]$Matches[1] -split '[,\s]+')) { if ($tok -match '^\d+$') { $k = [int]$tok; if ($k -ge 1 -and $k -le $logs.Count -and ($sel -notcontains $logs[$k - 1].Path)) { $sel += $logs[$k - 1].Path } } }
+            try { [void](Merge-TraceLogs -Dirs $sel -Name ('Merged log ' + (Get-Date -Format 'yyyy-MM-dd HH:mm'))); Write-Tag OK 'Merged into a new log (rename it with E <n> then N).' } catch { Write-Tag WARN $_.Exception.Message }
+            Wait-Enter
+            continue
+        }
+        if ($c -match '^[Pp]\s*(\d+)\s+(.+)$') {
+            $n = [int]$Matches[1]; $file = ([string]$Matches[2]).Trim().Trim('"')
+            if ($n -ge 1 -and $n -le $logs.Count) { try { Export-TraceLog -Dir $logs[$n - 1].Path -Destination $file; Write-Tag OK ('Saved to ' + $file) } catch { Write-Tag WARN $_.Exception.Message } } else { Write-Tag WARN 'No such number.' }
+            Wait-Enter
+            continue
+        }
+        if ($c -match '^[Ii]\s+(.+)$') {
+            try { $r = Import-TraceLog -Source (([string]$Matches[1]).Trim().Trim('"')); Write-Tag OK ("Imported {0} item(s); {1} skipped by the safety checks. Review it with E <n> before cleaning up." -f $r.Imported, $r.Skipped) } catch { Write-Tag WARN $_.Exception.Message }
+            Wait-Enter
+            continue
+        }
+        if ($c -match '^([CcDd])\s*(\d+)$') {
+            $verb = [string]$Matches[1]; $n = [int]$Matches[2]
+            if ($n -lt 1 -or $n -gt $logs.Count) { Write-Tag WARN 'No such number.'; Wait-Enter; continue }
+            $log = $logs[$n - 1]
+            if ($verb -match '^[Dd]$') {
+                if (Read-YesNo -Prompt ("Delete the trace log for '{0}'? (The program is not touched.)" -f $log.Name)) { try { Remove-TraceLog -Dir $log.Path; Write-Tag OK 'Deleted.' } catch { Write-Tag FAIL $_.Exception.Message }; Wait-Enter }
+                continue
+            }
+            $all = @(Get-InstalledPrograms)
+            if (@($all | Where-Object { $_.Name -ieq $log.Name }).Count -gt 0) {
+                Write-Tag WARN ("{0} is still listed as installed. Uninstall it first from the main list so its own uninstaller runs." -f $log.Name)
+                if (-not (Read-YesNo -Prompt 'Clean up from the log anyway?')) { continue }
+            }
+            $items = @(Get-TraceReviewItems -Log $log)
+            if ($items.Count -eq 0) { Write-Tag INFO 'Everything in this log is already gone.'; Wait-Enter; continue }
+            $others = @($all | Where-Object { $_.Name -ine $log.Name })
+            Invoke-ConsoleLeftoverReview -Items $items -Program ([pscustomobject]@{ Name = $log.Name }) -RecordDir '' -Others $others
+        }
+    }
+}
+
+function Invoke-ConsoleTraceEditor {
+    param([string]$Dir)
+    while ($true) {
+        Clear-Host
+        Show-Header 'DIVUNINSTALLER (Edit trace log)'
+        $d = Read-TraceData -Dir $Dir
+        Write-KV 'Name' $d.Name
+        if ($d.Comment) { Write-KV 'Comment' $d.Comment }
+        $i = 0
+        foreach ($x in @($d.Items)) { $i++; $what = $x.Path; if ($x.Name) { $what = $x.Path + ' -> ' + $x.Name }; Write-Host ('  {0,3}  {1}: {2}' -f $i, $x.Type, $what) }
+        Write-Host ''
+        Write-Host '   R <numbers> remove from log   |   A add item   |   N rename / comment   |   B back   (only the log changes)' -ForegroundColor DarkGray
+        $c = (Read-Host '   Choice').Trim()
+        if ($c -match '^[Bb]$' -or -not $c) { return }
+        if ($c -match '^[Rr]\s*(.+)$') {
+            $sel = @()
+            foreach ($tok in ([string]$Matches[1] -split '[,\s]+')) { if ($tok -match '^\d+$') { $k = [int]$tok; if ($k -ge 1 -and $k -le @($d.Items).Count) { $sel += [pscustomobject]@($d.Items)[$k - 1] } } }
+            if ($sel.Count -gt 0) { try { $n = Remove-TraceItems -Dir $Dir -Items $sel; Write-Tag OK ("Removed {0} item(s) from the log." -f $n) } catch { Write-Tag WARN $_.Exception.Message } }
+            continue
+        }
+        if ($c -match '^[Aa]$') {
+            $t = (Read-Host '   Type: F folder, L file, K registry key, R startup value').Trim().ToUpper()
+            $type = switch ($t) { 'F' { 'Folder' } 'L' { 'File' } 'K' { 'RegistryKey' } 'R' { 'RunValue' } default { '' } }
+            if (-not $type) { continue }
+            $p = (Read-Host '   Full path').Trim()
+            $vn = ''
+            if ($type -eq 'RunValue') { $vn = (Read-Host '   Value name').Trim() }
+            try { Add-TraceItem -Dir $Dir -Type $type -Path $p -Name $vn; Write-Tag OK 'Added.' } catch { Write-Tag WARN $_.Exception.Message; Wait-Enter }
+            continue
+        }
+        if ($c -match '^[Nn]$') {
+            $nm = (Read-Host ("   New name (Enter = keep '{0}')" -f $d.Name)).Trim()
+            if (-not $nm) { $nm = $d.Name }
+            $cm = (Read-Host '   Comment (Enter = keep)').Trim()
+            if (-not $cm) { $cm = $d.Comment }
+            try { Set-TraceDetails -Dir $Dir -Name $nm -Comment $cm } catch { Write-Tag WARN $_.Exception.Message; Wait-Enter }
+            continue
+        }
+    }
+}
+
+function Invoke-JunkPage {
+    while ($true) {
+        Clear-Host
+        Show-Header 'JUNK CLEANER (old temp files, dumps, reports, caches)'
+        Write-Host '   Read-only scan first. Nothing is selected for you. Items go to quarantine (restorable) unless you choose permanent delete.' -ForegroundColor DarkGray
+        $rows = @(Get-JunkScan)
+        $i = 0
+        foreach ($r in $rows) {
+            $i++
+            $extra = ''
+            if ($r.RecentSkipped -gt 0) { $extra = ('   ({0} newer kept)' -f $r.RecentSkipped) }
+            Write-Host ('  {0,3}  {1,-24} {2,10}   {3:N0} file(s){4}' -f $i, $r.Name, (Format-Bytes $r.Bytes), $r.Files, $extra)
+            foreach ($b in @($r.Blocked)) { Write-Host ('         ' + $b) -ForegroundColor Yellow }
+        }
+        Write-Host ''
+        Write-Host '   Never touched: Recycle Bin, Downloads, Documents, Desktop, browser history/cookies/passwords.' -ForegroundColor DarkGray
+        $c = (Read-Host '   Numbers to clean (e.g. 1,3), Q = quarantine page, B = back').Trim()
+        if (-not $c -or $c -match '^[Bb]$') { return }
+        if ($c -match '^[Qq]$') { Invoke-QuarantinePage; continue }
+        $sel = @()
+        foreach ($tok in ($c -split '[,\s]+')) { if ($tok -match '^\d+$') { $k = [int]$tok; if ($k -ge 1 -and $k -le $rows.Count -and $rows[$k - 1].Units.Count -gt 0 -and ($sel -notcontains $rows[$k - 1])) { $sel += $rows[$k - 1] } } }
+        if ($sel.Count -eq 0) { Write-Tag WARN 'Nothing selected.'; Wait-Enter; continue }
+        $mode = (Read-Host '   [M] move to quarantine (can be restored)   [D] delete permanently (cannot be undone)   Enter = M').Trim()
+        $perm = ($mode -match '^[Dd]')
+        $label = 'Move to quarantine'; if ($perm) { $label = 'PERMANENTLY delete' }
+        if (-not (Read-YesNo -Prompt ("{0}: {1}?" -f $label, (($sel | ForEach-Object { $_.Name }) -join ', ')))) { continue }
+        foreach ($r in $sel) {
+            try {
+                $res = Move-JunkToQuarantine -Category $r.Category -Units $r.Units -Permanent:$perm
+                Write-KV $r.Name ('{0} moved ({1}), {2} skipped' -f $res.Moved, (Format-Bytes $res.Bytes), $res.Failed) 'Green'
+            } catch { Write-Tag FAIL $_.Exception.Message }
+        }
+        Wait-Enter
+    }
+}
+
+function Invoke-UninstallerPage {
+    while ($true) {
+        Clear-Host
+        Show-Header 'DIVUNINSTALLER (Uninstall a program and clear its leftovers)'
+        $filter = (Read-Host '   Search by name (Enter = all, L = logs, Q = quarantine, N = forced by name, W = Windows apps, X = browser extensions, T = install monitor, S = startup manager, E = exclude list, J = junk cleaner, O = options, B = back)').Trim()
+        if ($filter -match '^[Bb]$') { return }
+        if ($filter -match '^[Nn]$') { Invoke-ConsoleForcedByName; continue }
+        if ($filter -match '^[Ww]$') { Invoke-ConsoleWindowsApps; continue }
+        if ($filter -match '^[Xx]$') { Invoke-ConsoleBrowserExtensions; continue }
+        if ($filter -match '^[Tt]$') { Invoke-ConsoleInstallMonitor; continue }
+        if ($filter -match '^[Ss]$') { Invoke-StartupPage; continue }
+        if ($filter -match '^[Ee]$') { Invoke-ConsoleExcludeList; continue }
+        if ($filter -match '^[Oo]$') { Invoke-ConsoleUninstallerOptions; continue }
+        if ($filter -match '^[Qq]$') { Invoke-QuarantinePage; continue }
+        if ($filter -match '^[Jj]$') { Invoke-JunkPage; continue }
+        if ($filter -match '^[Ll]$') {
+            $hist = @(Get-UninstallHistory)
+            if ($hist.Count -eq 0) { Write-Tag INFO 'Nothing has been uninstalled with DIVuninstaller yet.' }
+            foreach ($h in $hist) {
+                $how = $h.Mode; if ($h.Forced) { $how = 'Forced' }; if (-not $how) { $how = 'not finished' }
+                Write-Host ('  {0}  {1} {2}  [{3}]  leftovers moved: {4}' -f $h.Started, $h.Name, $h.Version, $how, $(if ($h.LeftoversMoved) { $h.LeftoversMoved } else { '0' }))
+            }
+            Wait-Enter
+            continue
+        }
+        Write-Busy -Activity 'Reading installed programs' -Status 'Reading the list Windows keeps...' -Percent 30
+        $all = @(Get-InstalledPrograms)
+        Write-Busy -Activity 'Reading installed programs' -Status 'Done' -Percent 100
+        $shown = @($all | Where-Object { (-not $filter) -or ($_.Name -like ('*' + $filter + '*')) } | Select-Object -First 60)
+        if ($shown.Count -eq 0) { Write-Tag INFO 'No programs matched.'; Wait-Enter; continue }
+        $i = 0
+        foreach ($p in $shown) {
+            $i++
+            $sz = ''
+            if ($p.SizeKB -gt 0) { $sz = Format-Bytes ([double]$p.SizeKB * 1024) }
+            $tag = ''
+            if ($p.Protected) { $tag = '  [protected]' }
+            Write-Host ('  {0,3}  {1}  {2}  {3}{4}' -f $i, $p.Name, $p.Version, $sz, $tag)
+        }
+        Write-Host ''
+        Write-Host '   <n> uninstall   |   <n>,<n>,<n> uninstall several in one go   |   F<n> forced uninstall   |   D<n> details   |   Enter = search again' -ForegroundColor DarkGray
+        $c = (Read-Host '   Choice').Trim()
+        $forced = $false
+        $details = $false
+        if ($c -match '^\d+(\s*[,\s]\s*\d+)+$') {
+            $batchSel = @()
+            foreach ($tok in ($c -split '[,\s]+')) { if ($tok -match '^\d+$') { $k = [int]$tok; if ($k -ge 1 -and $k -le $shown.Count -and ($batchSel -notcontains $shown[$k - 1])) { $batchSel += $shown[$k - 1] } } }
+            if ($batchSel.Count -gt 1) { Invoke-ConsoleBatchUninstall -Programs $batchSel -All $all; continue }
+            if ($batchSel.Count -eq 1) { $c = [string]([array]::IndexOf(@($shown), $batchSel[0]) + 1) } else { continue }
+        }
+        if ($c -match '^[Ff]\s*(\d+)$') { $forced = $true; $c = [string]$Matches[1] }
+        elseif ($c -match '^[Dd]\s*(\d+)$') { $details = $true; $c = [string]$Matches[1] }
+        if ($c -notmatch '^\d+$') { continue }
+        $n = [int]$c
+        if ($n -lt 1 -or $n -gt $shown.Count) { Write-Tag WARN 'No such number.'; Wait-Enter; continue }
+        $p = $shown[$n - 1]
+        if ($details) { Write-Host ''; Write-Host (Get-ProgramDetailsText -Program $p); Wait-Enter; continue }
+        if ($p.Protected) { Write-Tag WARN ("{0} is protected. Use Windows Settings > Apps to remove it." -f $p.Name); Wait-Enter; continue }
+        $others = @($all | Where-Object { $_.KeyPath -ne $p.KeyPath })
+        if ($forced) {
+            Write-Host ''
+            Write-KV 'Program' ($p.Name + ' ' + $p.Version)
+            Write-Host '   Forced uninstall does NOT run the program''s uninstaller. It makes a restore point, backs up the registry entry,' -ForegroundColor Yellow
+            Write-Host '   then scans at the Advanced level. Nothing is selected for you.' -ForegroundColor Yellow
+            if (-not (Read-YesNo -Prompt 'Start a forced uninstall?')) { continue }
+            try { $r = Invoke-ProgramUninstall -Program $p -SkipUninstaller } catch { Write-Tag FAIL $_.Exception.Message; Wait-Enter; continue }
+            Invoke-ConsoleLeftoverStage -Program $p -Mode 'Advanced' -RecordDir $r.BackupDir -Others $others
+            continue
+        }
+        $cmd = Split-UninstallCommand -Text $p.UninstallString
+        if (-not $cmd) { Write-Tag FAIL 'The uninstall command could not be read safely, so nothing was run. Try a forced uninstall (F<n>).'; Wait-Enter; continue }
+        Write-Host ''
+        Write-KV 'Program' ($p.Name + ' ' + $p.Version)
+        Write-KV 'Command' ($cmd.File + ' ' + $cmd.Arguments)
+        $mode = Read-UninstallScanMode
+        Write-Host ('   ' + (Get-ScanModeDescription -Mode $mode)) -ForegroundColor DarkGray
+        Write-Host '   Steps: restore point, back up the registry entry, run its own uninstaller, then the scan above.' -ForegroundColor DarkGray
+        if (-not (Read-YesNo -Prompt 'Uninstall this program now?')) { continue }
+        try { $r = Invoke-ProgramUninstall -Program $p } catch { Write-Tag FAIL $_.Exception.Message; Wait-Enter; continue }
+        if ($r.StillInstalled) {
+            Update-UninstallRecord -Dir $r.BackupDir -Values @{ Mode = $mode; LeftoversFound = 0; LeftoversMoved = 0 }
+            Write-Tag WARN ("{0} still appears to be installed (exit code {1}). Leftovers are not scanned until it is gone. If its uninstaller is broken, use F<n>." -f $p.Name, $r.ExitCode)
+            Wait-Enter
+            continue
+        }
+        Write-Tag OK 'The program is no longer listed.'
+        Invoke-ConsoleLeftoverStage -Program $p -Mode $mode -RecordDir $r.BackupDir -Others $others
+    }
+}
+
+function Show-GuiQuarantine {
+    Reset-GuiPage -Title 'Quarantine' -Subtitle ('Folder: ' + $Script:QuarantineDir)
+    $list = @(Get-QuarantineList)
+    $lb = New-Object System.Windows.Controls.ListBox
+    $lb.Height = 300
+    $lb.Background = (Get-GuiBrush '#131D33'); $lb.Foreground = (Get-GuiBrush '#E8EEF8')
+    foreach ($q in $list) {
+        $item = New-Object System.Windows.Controls.ListBoxItem
+        $item.Content = ("{0}    {1}    {2} item(s)    {3}" -f $q.Program, $q.Created, $q.Count, (Format-Bytes $q.SizeBytes))
+        $item.Tag = $q
+        [void]$lb.Items.Add($item)
+    }
+    $Script:GuiQuarList = $lb
+    Add-GuiChild $Script:GuiContent $lb
+    if ($list.Count -eq 0) { Add-GuiChild $Script:GuiContent (New-GuiText -Text 'The quarantine is empty.' -Color '#8DA0BF') }
+    $bar = New-Object System.Windows.Controls.WrapPanel
+    $bar.Margin = '0,10,0,0'
+    Add-GuiChild $bar (New-GuiButton -Text 'RESTORE' -Bg '#238636' -OnClick {
+        $it = $Script:GuiQuarList.SelectedItem
+        if (-not $it) { Show-GuiMessage 'Select an entry first.'; return }
+        if (-not (Confirm-Gui ("Put everything from this quarantine entry back where it was?`n`n{0}" -f $it.Tag.Program) 'Confirm restore' 'Question')) { return }
+        $r = Invoke-GuiWithBusy -Title 'Restoring' -Detail 'Moving folders back and importing registry keys...' -Action { Restore-Quarantine -Session $it.Tag }
+        Show-GuiMessage ("Restored {0}. Skipped {1} (already present). Failed {2}." -f $r.Restored, $r.Skipped, $r.Failed)
+        Show-GuiQuarantine
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'DELETE PERMANENTLY' -OnClick {
+        $it = $Script:GuiQuarList.SelectedItem
+        if (-not $it) { Show-GuiMessage 'Select an entry first.'; return }
+        if (Confirm-Gui ("Permanently delete this quarantine entry?`n`n{0}   {1}`n`nThis cannot be undone." -f $it.Tag.Program, (Format-Bytes $it.Tag.SizeBytes)) 'Confirm delete' 'Warning') {
+            try { Remove-QuarantineFolder -Dir $it.Tag.Path; Show-GuiQuarantine } catch { Show-GuiMessage $_.Exception.Message 'Failed' 'Error' }
+        }
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'OPEN FOLDER' -OnClick {
+        if (-not (Test-Path -LiteralPath $Script:QuarantineDir)) { New-Item -ItemType Directory -Path $Script:QuarantineDir -Force | Out-Null }
+        Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $Script:QuarantineDir + '"')
+    })
+    Add-GuiChild $bar (New-GuiButton -Text 'BACK' -OnClick { Show-GuiUninstaller })
+    Add-GuiChild $Script:GuiContent $bar
+}
+
+function Show-LeftoverList {
+    param($Items)
+    $i = 0
+    foreach ($it in @($Items)) {
+        $i++
+        $sz = ''
+        if ($it.SizeBytes -gt 0) { $sz = '  ' + (Format-Bytes $it.SizeBytes) }
+        $what = $it.Path
+        if ($it.Name) { $what = $it.Path + ' -> ' + $it.Name }
+        if ($it.Status -eq 'Protected') { Write-Host ('  {0,3}  [PROTECTED] {1}: {2}   (exclude list)' -f $i, $it.Type, $what) -ForegroundColor Red }
+        else { Write-Host ('  {0,3}  [{1}] {2}: {3}{4}' -f $i, $it.Risk, $it.Type, $what, $sz) }
+    }
+}
+
+function Invoke-QuarantinePage {
+    while ($true) {
+        Clear-Host
+        Show-Header 'DIVUNINSTALLER (Quarantine)'
+        $list = @(Get-QuarantineList)
+        if ($list.Count -eq 0) { Write-Tag INFO 'The quarantine is empty.'; Wait-Enter; return }
+        $i = 0
+        foreach ($q in $list) { $i++; Write-Host ('  {0,3}  {1}   {2}   {3} item(s)   {4}' -f $i, $q.Program, $q.Created, $q.Count, (Format-Bytes $q.SizeBytes)) }
+        Write-Host ''
+        Write-Host '   R <n>  restore   |   D <n>  delete permanently (cannot be undone)   |   B  back' -ForegroundColor DarkGray
+        $c = (Read-Host '   Choice').Trim()
+        if ($c -match '^[Bb]$') { return }
+        if ($c -match '^([RrDd])\s*(\d+)$') {
+            $verb = [string]$Matches[1]
+            $n = [int]$Matches[2]
+            if ($n -lt 1 -or $n -gt $list.Count) { Write-Tag WARN 'No such entry.'; Wait-Enter; continue }
+            $q = $list[$n - 1]
+            if ($verb -match '^[Rr]$') {
+                if (Read-YesNo -Prompt ("Restore everything from '{0}'?" -f $q.Program)) { $r = Restore-Quarantine -Session $q; Write-KV 'Restored' $r.Restored 'Green'; Write-KV 'Skipped' $r.Skipped 'Yellow'; Write-KV 'Failed' $r.Failed; Wait-Enter }
+            } else {
+                if (Read-YesNo -Prompt ("PERMANENTLY delete '{0}'? This cannot be undone." -f $q.Program)) {
+                    try { Remove-QuarantineFolder -Dir $q.Path; Write-Tag OK 'Deleted.' } catch { Write-Tag FAIL $_.Exception.Message }
+                    Wait-Enter
+                }
+            }
+        }
+    }
+}
+
+function Show-GuiTweaksHub {
+    # Two tab-style buttons: our own tweaks, and the YouTuber Optimizations area (not available yet).
+    param([ValidateSet('Ours', 'YouTuber', 'Uninstalled')][string]$Tab = 'Ours')
+    Reset-GuiPage -Title 'Tweaks' -Subtitle 'Choose a set. Nothing changes until you review and approve it.'
+    $p = $Script:GuiContent
+    $tabs = New-Object System.Windows.Controls.WrapPanel
+    $tabs.Margin = '0,0,0,10'
+    $activeOurs = ''; $activeYt = ''; $activeUn = ''
+    if ($Tab -eq 'Ours') { $activeOurs = '#4A5BD8' } elseif ($Tab -eq 'YouTuber') { $activeYt = '#4A5BD8' } else { $activeUn = '#4A5BD8' }
+    Add-GuiChild $tabs (New-GuiButton -Text 'DIVOPTIMIZER TWEAKS' -Width 220 -Bg $activeOurs -OnClick { Show-GuiTweaksHub -Tab 'Ours' })
+    Add-GuiChild $tabs (New-GuiButton -Text 'YOUTUBER OPTIMIZATIONS' -Width 240 -Bg $activeYt -OnClick { Show-GuiTweaksHub -Tab 'YouTuber' })
+    Add-GuiChild $tabs (New-GuiButton -Text 'DIVUNINSTALLER' -Width 180 -Bg $activeUn -OnClick { Show-GuiTweaksHub -Tab 'Uninstalled' })
+    Add-GuiChild $p $tabs
+    if ($Tab -eq 'Ours') {
+        Add-GuiChild $p (New-GuiText -Text 'Tweaks written and reviewed for DIVoptimizer. Each one shows its current and new value, its risk, and whether it can be undone.' -Size 12 -Color '#8DA0BF' -Margin '0,0,0,8')
+        $o = New-Object System.Windows.Controls.WrapPanel
+        Add-GuiChild $o (New-GuiNavButton 'PERFORMANCE' { Show-GuiCategory -Title 'Performance' -Categories @('Performance') })
+        Add-GuiChild $o (New-GuiNavButton 'GAMING' { Show-GuiCategory -Title 'Gaming' -Categories @('Gaming') })
+        Add-GuiChild $o (New-GuiNavButton 'PRIVACY' { Show-GuiCategory -Title 'Privacy' -Categories @('Privacy') })
+        Add-GuiChild $o (New-GuiNavButton 'OPTIONAL APPS' { Show-GuiOptionalApps })
+        Add-GuiChild $p $o
+    } elseif ($Tab -eq 'Uninstalled') {
+        Add-GuiChild $p (New-GuiText -Text 'Remove a program with its own uninstaller, then clear the folders and registry keys it leaves behind. Leftovers are moved to a quarantine you can restore from.' -Size 12 -Color '#8DA0BF' -Margin '0,0,0,8')
+        $u = New-Object System.Windows.Controls.WrapPanel
+        Add-GuiChild $u (New-GuiNavButton 'OPEN DIVUNINSTALLER' { Show-GuiUninstaller } '#238636')
+        Add-GuiChild $u (New-GuiNavButton 'JUNK CLEANER' { Show-GuiJunkCleaner })
+        Add-GuiChild $u (New-GuiNavButton 'QUARANTINE' { Show-GuiQuarantine })
+        Add-GuiChild $p $u
+    } else {
+        $card = New-Object System.Windows.Controls.Border
+        $card.Background = (Get-GuiBrush '#131D33'); $card.BorderBrush = (Get-GuiBrush '#25324D'); $card.BorderThickness = '1'
+        $card.CornerRadius = '10'; $card.Padding = '20,16'; $card.Margin = '0,6,0,0'
+        $sp = New-Object System.Windows.Controls.StackPanel
+        Add-GuiChild $sp (New-GuiText -Text 'Coming soon' -Size 18 -Bold)
+        Add-GuiChild $sp (New-GuiText -Text 'This area is not available yet, and nothing here can change your PC.' -Size 13 -Color '#8DA0BF' -Margin '0,6,0,0')
+        Add-GuiChild $sp (New-GuiText -Text 'When it arrives, every tweak will be reviewed one by one and shown with its current and new value, its risk, and an undo, like everything else in DIVoptimizer. It will not be added by copying a list.' -Size 12 -Color '#8DA0BF' -Margin '0,10,0,0')
+        $card.Child = $sp
+        Add-GuiChild $p $card
+    }
+    Set-GuiStatus 'Ready.'
+}
+
 function Show-GuiDashboard {
     Reset-GuiPage -Title 'System' -Subtitle ''
     $s = $Script:LastScan
@@ -5059,15 +8299,14 @@ function Show-GuiDashboard {
         Add-GuiChild $pr (New-GuiButton -Text ($k + ' Profile') -Tag $k -Width 200 -OnClick { param($sd, $e) Show-GuiRecommendations -ProfileName ([string]$sd.Tag) })
     }
     Add-GuiChild $p $pr
-    Add-GuiChild $p (New-GuiText -Text 'OPTIMIZE' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,14,0,0')
+    Add-GuiChild $p (New-GuiText -Text 'TWEAKS' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,14,0,0')
     $o = New-Object System.Windows.Controls.WrapPanel
-    Add-GuiChild $o (New-GuiNavButton 'PERFORMANCE' { Show-GuiCategory -Title 'Performance' -Categories @('Performance') })
-    Add-GuiChild $o (New-GuiNavButton 'GAMING' { Show-GuiCategory -Title 'Gaming' -Categories @('Gaming') })
-    Add-GuiChild $o (New-GuiNavButton 'PRIVACY' { Show-GuiCategory -Title 'Privacy' -Categories @('Privacy') })
-    Add-GuiChild $o (New-GuiNavButton 'DEBLOAT (OPTIONAL APPS)' { Show-GuiOptionalApps })
+    Add-GuiChild $o (New-GuiNavButton 'DIVOPTIMIZER TWEAKS' { Show-GuiTweaksHub -Tab 'Ours' })
+    Add-GuiChild $o (New-GuiNavButton 'YOUTUBER OPTIMIZATIONS (SOON)' { Show-GuiTweaksHub -Tab 'YouTuber' })
     Add-GuiChild $p $o
     Add-GuiChild $p (New-GuiText -Text 'MAINTAIN' -Size 12 -Bold -Color '#7C8CFF' -Margin '0,14,0,0')
     $mt = New-Object System.Windows.Controls.WrapPanel
+    Add-GuiChild $mt (New-GuiNavButton 'DIVUNINSTALLER' { Show-GuiUninstaller })
     Add-GuiChild $mt (New-GuiNavButton 'STARTUP' { Show-GuiStartup })
     Add-GuiChild $mt (New-GuiNavButton 'CLEANUP' { Show-GuiCleanup })
     Add-GuiChild $mt (New-GuiNavButton 'NETWORK' { Show-GuiNetwork })

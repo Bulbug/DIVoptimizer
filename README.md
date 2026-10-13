@@ -1,4 +1,4 @@
-# DIVoptimizer v0.8.0
+# DIVoptimizer v0.16.0
 
 A transparent, hardware-aware, **reversible** Windows optimization and maintenance utility written in PowerShell.
 
@@ -57,7 +57,7 @@ You can also save the script and run the file; everything works the same either 
 **Trust note.** Running `irm | iex` executes whatever is currently published at that URL, with your privileges. Only run it from a repository you trust, and if you maintain the repo, protect `main` (2FA, branch protection). To use a fixed, reviewed version instead of the latest `main`, pin a tag or commit:
 
 ```powershell
-$env:DIVOPTIMIZER_URL = "https://raw.githubusercontent.com/Bulbug/DIVoptimizer/v0.8.0/DIVoptimizer.ps1"
+$env:DIVOPTIMIZER_URL = "https://raw.githubusercontent.com/Bulbug/DIVoptimizer/v0.16.0/DIVoptimizer.ps1"
 irm $env:DIVOPTIMIZER_URL | iex
 ```
 
@@ -269,3 +269,74 @@ No license has been chosen yet. See `LICENSE`.
 - `-Health` - read-only self-check.
 - `-Undo` - restore the newest verified backup (asks first).
 - Plain-text `.log` alongside the JSON log in `%LOCALAPPDATA%\DIVoptimizer\Logs`.
+- Live command echo: while it works, the PowerShell window prints each exact command as a `PS>` line, so you can see it really is doing what the preview said. (This also applies in the GUI; keep the PowerShell window visible.)
+
+## DIVuninstaller (v0.16.0)
+
+A Revo-style uninstaller: remove a program with its own uninstaller, then clear what it leaves behind, with a way back. Open it from the app (Tweaks > DIVuninstaller, or Maintain > DIVuninstaller) or from the console menu (option 20).
+
+**Program list.** Built from the uninstall entries Windows keeps (machine, 32-bit and per-user). Search, sort by name, size, install date or publisher, and a details panel (publisher, install date, size, install folder, uninstall entry). System components and updates are hidden. System, runtime, driver and security software is marked **protected** and cannot be uninstalled here.
+
+**Uninstall.** Makes a restore point (if Windows allows it), backs up the program's registry entry, then runs the program's **own** uninstaller. The exact command is shown first and printed as a `PS>` line.
+
+**Leftover scan level** (you choose before uninstalling):
+
+| Level | What it looks for |
+|---|---|
+| Built-in | Nothing. Only the program's uninstaller runs. |
+| Safe | The install folder, plus folders under Program Files and ProgramData and registry keys under Software with the program's exact name. |
+| Moderate (default) | Safe, plus AppData folders and startup (Run) entries pointing into the install folder. |
+| Advanced | Moderate, plus Start Menu and Desktop shortcuts, App Paths entries, the program's own uninstall entry, and the publisher folder if it ends up empty. |
+
+**Forced uninstall.** For a program whose uninstaller is missing or broken. It does **not** run the uninstaller; it makes a restore point, backs up the registry entry, then scans at the Advanced level and lists everything it finds, including the program's own uninstall entry.
+
+**Review screen (v0.11).** Each leftover is shown by how sure we are of it:
+
+| Look | Meaning |
+|---|---|
+| **Bold**, with a check box | Matched to this program by exact name or path. Can be selected. |
+| Grey line "In ..." | Only shows where the bold items sit. Cannot be selected. |
+| Red | On your **exclude list**. Cannot be selected and is never touched. |
+
+Right-click an item: **Open in Regedit** (registry items), **Open containing folder** (folders and files), **Add to exclude list**. The exclude list (EXCLUDE LIST button, or `E` in the console) is saved in `%LOCALAPPDATA%\DIVoptimizer\uninstaller-exclude.json`. A pattern covers everything under it; `*` is any text and `?` one character. Patterns that would match almost everything (`*`, `C:\*`, `HKLM:\*`) are refused. The list is checked again at the moment of moving, not only when the scan ran.
+
+**Options (v0.11).** All off by default: check all matched leftovers (you still confirm), force-stop programs running from the install folder before uninstalling, and only run the built-in uninstaller (never scan).
+
+**Forced uninstall by name (v0.11).** FORCED BY NAME (or `N` in the console) is for a program that is not listed, was removed earlier or was half-installed. Type an exact name (several can be separated with `;`, `*` and `?` work when searching) and/or a folder inside Program Files, ProgramData or AppData. It lists any installed program or earlier record that matches, then scans at the Advanced level. It never runs an uninstaller from there, and partial names do not match.
+
+**Batch uninstall (v0.12).** Hold Ctrl or Shift in the program list and press UNINSTALL (console: `1,3,5`). The whole batch is checked first (protected programs and unreadable uninstall commands stop it before anything runs), then ONE restore point is made, then each program's own uninstaller runs one after another. It does not guess silent switches, so each uninstaller may open its own window. If one fails or is cancelled the rest still run. You get one combined leftover list; selected items are quarantined as one entry per program, so each can be restored on its own.
+
+**Windows Apps (v0.12).** WINDOWS APPS (console: `W`) lists the Store and built-in apps for your account, with search and multi-select. Frameworks, system packages and the apps Windows needs (Store, Edge, Defender UI, shell and search components, and similar) are not listed or are marked protected. Removal is by exact package name through the same guarded function as Optional Apps, for your account by default; "for all users" needs Administrator and also removes the copy new accounts would get. A restore point is made first, but Windows restore points do not bring Store apps back; reinstall them from the Microsoft Store. App removals are logged but there is no leftover scan for them (Windows removes the app's own data).
+
+**Browser extensions (v0.13).** BROWSER EXTENSIONS (console: `X`) lists extensions for Chrome, Edge, Brave and Firefox (every profile), with search and multi-select. Names are read from the extension's own manifest. Removal moves the extension's own folder (or Firefox `.xpi` file) to quarantine, so it can be restored; browser databases are never edited. The browser must be closed first, or the removal is refused. An extension installed by browser sync or an organization policy may be added back by the browser; remove those from the browser's own extensions page. Firefox drops the missing entry the next time it starts.
+
+**Startup manager.** STARTUP MANAGER (console: `S`) opens the existing Startup Manager, which turns startup items on and off the way Task Manager does, with a backup. It was already part of the app, so v0.13 links to it instead of adding a second one.
+
+**Install monitor (v0.14).** INSTALL MONITOR (console: `T`) is a lightweight version of Revo's install tracing. Start a trace and name the program, install it, open it once, then press FINISH. DIVuninstaller takes a snapshot before and after (names only, no file contents: folders two levels deep under Program Files, ProgramData, AppData and Local; Start Menu and Desktop shortcuts; registry key names two levels deep under Software; uninstall entries; Run entries; service names) and saves the difference as a trace log. Later, CLEAN UP FROM LOG lists the items from that log that still exist and sends the ones you select to quarantine, the same as any leftover.
+
+How it differs from Revo: it is a before/after comparison, not a real-time monitor, so it can miss changes in places it does not look and can include unrelated changes made by Windows or other programs during the window (you review every item). Keys under Microsoft, Classes and Policies are not tracked. Services are listed in the log but never removed. Files inside new folders are covered by moving the folder. Do not install anything else while a trace is running. Close other installers first. If the program is still installed when you clean up, you are asked to run its own uninstaller first.
+
+**Custom uninstall editor (v0.15).** On the INSTALL MONITOR page, EDIT opens a trace log so you decide what it will undo: rename it, add a comment, remove items from the log, or add a folder, file, registry key or startup value by hand. MERGE (two or more logs into a new one; the originals stay), EXPORT (to a `.json` file; never overwrites) and IMPORT (from a `.json` file, saved as a new log). Console: `E <n>` edit, `M` merge, `P` export, `I` import. Editing only changes the log; nothing on the PC is touched until CLEAN UP FROM LOG, which still shows every item for review and uses quarantine. Typed and imported items must pass the same safety checks as scanned ones: full path, no wildcards or `..`, not a protected or top-level folder, registry keys at least two levels deep and not under Microsoft, Classes or Policies (the standard Run key is allowed for startup values). Items that fail are skipped on import, and the count is shown. Imported logs are marked as imported.
+
+**Junk cleaner (v0.16).** JUNK CLEANER (console: menu `21`, or `J` inside DIVuninstaller) scans first, read-only, and shows the size of each category. Nothing is ticked for you.
+
+| Category | What it covers |
+|---|---|
+| User temp files | Items in your temp folder not changed for 24 hours |
+| Windows temp files | Same for the Windows temp folder (Administrator) |
+| Crash dumps | Old `.dmp` files in your CrashDumps folder and `Windows\Minidump` (Administrator) |
+| Windows error reports | Old report archives and queues |
+| Thumbnail cache | `thumbcache_*.db` (Explorer rebuilds it) |
+| Browser caches | Cache, Code Cache and GPUCache of Chrome, Edge and Brave profiles, and Firefox `cache2`. The browser must be closed. History, cookies, passwords and sign-ins are not touched |
+
+Selected items are **moved to quarantine** and can be restored from the Quarantine page; disk space is freed once you delete that quarantine entry. DELETE PERMANENTLY skips the quarantine after a second confirmation and cannot be undone. Each item is checked again right before it moves: it must be a direct child of the known junk folder, not a link or junction, not on your exclude list, and not changed in the last 24 hours; files in use are skipped and counted. Never touched: Recycle Bin, Downloads, Documents, Desktop, and anything outside the folders above. Windows Update and Delivery Optimization caches stay on the Cleanup page. There is no file shredder or "evidence remover".
+
+**Quarantine.** Nothing is pre-selected. Selected folders and shortcuts are **moved** to `%LOCALAPPDATA%\DIVoptimizer\Quarantine`, not deleted. Registry keys and startup values are exported to `.reg` files first. Restore from the Quarantine page. Only "Delete permanently" is irreversible, and it asks first. An empty publisher folder is only removed if it really has no files left at that moment.
+
+**Logs.** Every uninstall writes a record (program, time, scan level, exit code, leftovers found and moved, quarantine location, and the registry backup) to `%LOCALAPPDATA%\DIVoptimizer\Uninstalled`. The Logs page lists them.
+
+Always protected, whatever the scan level: Windows, Microsoft, Common Files and similar folders and keys, drive roots, profile roots, and any folder that contains another installed program.
+
+**Compared with Revo Uninstaller.** Included: program list and details, batch uninstall, a Windows Apps list, browser extensions, an install monitor with trace logs, uninstall levels, forced uninstall (also by name), leftover scan with a bold/grey/red review screen, exclude list, per-item Regedit and folder shortcuts, logs. Not included: Hunter mode (drag a crosshair onto a window; planned), silent batch uninstall and real-time install monitoring (the install monitor is a before/after comparison). Trace logs can be edited, merged, exported and imported (v0.15). Autorun tools are covered by the Startup Manager. A junk cleaner was added in v0.16.
+
+Limits: matching is by exact name, so some leftovers will be missed rather than risk removing something shared. The program's own uninstaller may itself be incomplete or interactive. The emergency reset script does not cover the quarantine; restore from the app, or double-click the `.reg` files and move the folders back by hand.

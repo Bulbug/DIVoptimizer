@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 # ================================================================
-# DIVoptimizer-Reset.ps1   (v0.8.0)   EMERGENCY RESTORE
+# DIVoptimizer-Reset.ps1   (v0.16.0)   EMERGENCY RESTORE
 #
 # Independent of DIVoptimizer.ps1 and its GUI. It embeds the same
 # restore code, finds your backups, verifies them and restores
@@ -18,7 +18,7 @@ param(
 
 $Script:ResetUrl = 'https://raw.githubusercontent.com/Bulbug/DIVoptimizer/refs/heads/main/DIVoptimizer-Reset.ps1'
 $Script:AppName       = 'DIVoptimizer Emergency Restore'
-$Script:Version       = '0.8.0'
+$Script:Version       = '0.16.0'
 $Script:SchemaVersion = 2
 $Script:DryRun        = $false
 $Script:ReadOnlyRun   = $false
@@ -243,10 +243,34 @@ function Test-RegistryValueEquals {
     }
 }
 
+function Write-Command {
+    # Shows the exact command about to run, in the PowerShell window, so nothing happens out of sight.
+    param([string]$Text)
+    if ($Script:DryRun) { return }
+    if (-not $Script:CommandLegendShown) {
+        $Script:CommandLegendShown = $true
+        Write-Host '  PS> lines are the exact commands DIVoptimizer runs on your PC.' -ForegroundColor DarkGray
+    }
+    Write-Host ('  PS> ' + $Text) -ForegroundColor DarkCyan
+    Write-Log -Level INFO -Action 'COMMAND' -Message $Text
+}
+
+function Format-RegCommandValue {
+    param([string]$Type, $Value)
+    switch ($Type) {
+        'Binary'      { return ('[binary, {0} bytes]' -f @($Value).Count) }
+        'MultiString' { return ("'" + ((@($Value) -join "','")) + "'") }
+        'DWord'       { return [string][int]$Value }
+        'QWord'       { return [string][long]$Value }
+        default       { return ("'" + ([string]$Value -replace "'", "''") + "'") }
+    }
+}
+
 function Set-RegistryValueSafe {
     # The ONLY function that writes a registry value. Honors dry-run.
     param([string]$Path, [string]$Name, [string]$Type, $Value)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would set $Path\$Name"; return $true }
+    Write-Command ("Set-ItemProperty -Path '{0}' -Name '{1}' -Value {2}   # {3}" -f $Path, $Name, (Format-RegCommandValue -Type $Type -Value $Value), $Type)
     if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force -ErrorAction Stop | Out-Null }
     New-ItemProperty -LiteralPath $Path -Name $Name -PropertyType $Type -Value $Value -Force -ErrorAction Stop | Out-Null
     return $true
@@ -255,6 +279,7 @@ function Set-RegistryValueSafe {
 function Remove-RegistryValueSafe {
     param([string]$Path, [string]$Name)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would remove $Path\$Name"; return $true }
+    Write-Command ("Remove-ItemProperty -Path '{0}' -Name '{1}'" -f $Path, $Name)
     Remove-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop
     return $true
 }
@@ -344,6 +369,7 @@ function Set-ServiceStartMode {
     param([string]$Name, [string]$Mode)
     if ($Mode -notin @('auto', 'delayed-auto', 'demand', 'disabled')) { throw "Unsupported start mode '$Mode'" }
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would set service $Name start= $Mode"; return $true }
+    Write-Command ('sc.exe config {0} start= {1}' -f $Name, $Mode)
     $out = & sc.exe config $Name start= $Mode 2>&1
     if ($LASTEXITCODE -ne 0) { throw ("sc.exe failed (exit {0}): {1}" -f $LASTEXITCODE, (($out | Out-String).Trim())) }
     return $true
@@ -352,12 +378,14 @@ function Set-ServiceStartMode {
 function Stop-ServiceSafe {
     param([string]$Name)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would stop service $Name"; return }
+    Write-Command ('Stop-Service -Name {0} -Force' -f $Name)
     Stop-Service -Name $Name -Force -ErrorAction Stop
 }
 
 function Start-ServiceSafe {
     param([string]$Name)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would start service $Name"; return }
+    Write-Command ('Start-Service -Name {0}' -f $Name)
     Start-Service -Name $Name -ErrorAction Stop
 }
 
@@ -423,6 +451,7 @@ function Set-TaskEnabledSafe {
     param([string]$TaskPath, [string]$TaskName, [bool]$Enabled)
     $tp = ConvertTo-TaskPath -Path $TaskPath
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would set task $tp$TaskName enabled=$Enabled"; return $true }
+    Write-Command ('{0}-ScheduledTask -TaskPath ''{1}'' -TaskName ''{2}''' -f $(if ($Enabled) { 'Enable' } else { 'Disable' }), $tp, $TaskName)
     if ($Enabled) { Enable-ScheduledTask -TaskPath $tp -TaskName $TaskName -ErrorAction Stop | Out-Null }
     else { Disable-ScheduledTask -TaskPath $tp -TaskName $TaskName -ErrorAction Stop | Out-Null }
     return $true
@@ -481,6 +510,7 @@ function Get-PowerPlans {
 function Set-ActivePowerPlan {
     param([string]$Guid)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would activate power plan $Guid"; return $true }
+    Write-Command ('powercfg.exe /setactive {0}' -f $Guid)
     $out = & powercfg.exe /setactive $Guid 2>&1
     if ($LASTEXITCODE -ne 0) { throw ("powercfg /setactive failed: " + (($out | Out-String).Trim())) }
     $now = Get-ActivePowerPlan
@@ -491,6 +521,7 @@ function Set-ActivePowerPlan {
 function Remove-PowerPlanSafe {
     param([string]$Guid)
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would delete power plan $Guid"; return }
+    Write-Command ('powercfg.exe /delete {0}' -f $Guid)
     $out = & powercfg.exe /delete $Guid 2>&1
     if ($LASTEXITCODE -ne 0) { throw ("powercfg /delete failed: " + (($out | Out-String).Trim())) }
 }
@@ -531,6 +562,7 @@ function Set-HibernationState {
     param([bool]$Enabled)
     $arg = if ($Enabled) { 'on' } else { 'off' }
     if ($Script:DryRun) { Write-Tag INFO "[DRY RUN] would run powercfg /hibernate $arg"; return $true }
+    Write-Command ('powercfg.exe /hibernate {0}' -f $arg)
     $out = & powercfg.exe /hibernate $arg 2>&1
     if ($LASTEXITCODE -ne 0) { throw ("powercfg /hibernate $arg failed: " + (($out | Out-String).Trim())) }
     return $true
